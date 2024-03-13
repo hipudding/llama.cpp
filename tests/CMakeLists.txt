@@ -135,6 +135,8 @@ if (NOT ${CMAKE_SYSTEM_PROCESSOR} MATCHES "loongarch64")
     target_include_directories(test-json-schema-to-grammar PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/../examples/server)
 endif()
 
+llama_target_and_test(test-backend-runtime.cpp)
+
 # dummy executable - not installed
 get_filename_component(TEST_TARGET test-c.c NAME_WE)
 add_executable(${TEST_TARGET} test-c.c)
