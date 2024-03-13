@@ -60,6 +60,10 @@
 #define GGML_USE_CUDA_SYCL_VULKAN
 #endif
 
+#if (defined(GGML_USE_CUDA) || defined(GGML_USE_SYCL)) || defined(GGML_USE_CANN)
+#define GGML_USE_CUDA_SYCL_CANN
+#endif
+
 #if defined(LLAMA_USE_CURL)
 #ifdef __linux__
 #include <linux/limits.h>
