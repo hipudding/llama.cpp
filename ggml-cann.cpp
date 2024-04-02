@@ -8,6 +8,7 @@
 #include "ggml-backend-impl.h"
 #include "ggml-cann/aclnn_ops.h"
 #include "ggml-cann/common.h"
+#include "ggml-cann/acl_ops.h"
 
 struct AclLifeCycle {
     AclLifeCycle() { ACL_CHECK(aclInit(nullptr)); }
@@ -346,8 +347,10 @@ static bool ggml_cann_compute_forward(ggml_backend_cann_context& ctx,
             ggml_cann_repeat(ctx, dst);
             break;
         case GGML_OP_GET_ROWS:
-        case GGML_OP_DUP:
             return false;
+        case GGML_OP_DUP:
+            ggml_cann_cont(ctx, dst);
+            break;
         case GGML_OP_ADD:
             ggml_cann_add(ctx, dst);
             break;
@@ -394,14 +397,19 @@ static bool ggml_cann_compute_forward(ggml_backend_cann_context& ctx,
             }
             break;
         case GGML_OP_NORM:
+            ggml_cann_norm(ctx, dst);
+            break;
         case GGML_OP_GROUP_NORM:
             return false;
         case GGML_OP_CONCAT:
             ggml_cann_concat(ctx, dst);
             break;
+        // TODO: Format need NC1HWC0.
         case GGML_OP_UPSCALE:
-        case GGML_OP_PAD:
             return false;
+        case GGML_OP_PAD:
+            ggml_cann_pad(ctx, dst);
+            break;
         case GGML_OP_ARANGE:
             ggml_cann_arange(ctx, dst);
             break;
@@ -413,8 +421,10 @@ static bool ggml_cann_compute_forward(ggml_backend_cann_context& ctx,
         case GGML_OP_RMS_NORM:
         case GGML_OP_MUL_MAT:
         case GGML_OP_MUL_MAT_ID:
-        case GGML_OP_SCALE:
             return false;
+        case GGML_OP_SCALE:
+            ggml_cann_scale(ctx, dst);
+            break;
         case GGML_OP_SQR:
             ggml_cann_sqr(ctx, dst);
             break;
@@ -422,12 +432,16 @@ static bool ggml_cann_compute_forward(ggml_backend_cann_context& ctx,
             ggml_cann_clamp(ctx, dst);
             break;
         case GGML_OP_CPY:
+            return false;
         case GGML_OP_CONT:
+            ggml_cann_cont(ctx, dst);
         case GGML_OP_NONE:
         case GGML_OP_RESHAPE:
         case GGML_OP_VIEW:
         case GGML_OP_PERMUTE:
         case GGML_OP_TRANSPOSE:
+            // Do nothing with these ops.
+            break;
         case GGML_OP_DIAG_MASK_INF:
         case GGML_OP_SOFT_MAX:
         case GGML_OP_ROPE:
@@ -437,8 +451,8 @@ static bool ggml_cann_compute_forward(ggml_backend_cann_context& ctx,
         case GGML_OP_SUM_ROWS:
             return false;
         case GGML_OP_ARGSORT:
-            // ggml_cann_argsort(ctx, dst);
-            // break;
+            ggml_cann_argsort(ctx, dst);
+            break;
             return false;
         default:
             return false;
@@ -458,7 +472,8 @@ GGML_CALL static const char* ggml_backend_cann_name(ggml_backend_t backend) {
 GGML_CALL static void ggml_backend_cann_free(ggml_backend_t backend) {
     ggml_backend_cann_context* cann_ctx =
         (ggml_backend_cann_context*)backend->context;
-
+    ACL_CHECK(aclrtSynchronizeDevice());
+    ACL_CHECK(aclrtResetDevice(cann_ctx->device));
     delete cann_ctx;
     delete backend;
 }
@@ -591,8 +606,9 @@ GGML_CALL static enum ggml_status ggml_backend_cann_graph_compute(
     for (int i = 0; i < cgraph->n_nodes; i++) {
         ggml_tensor* node = cgraph->nodes[i];
 
-        if (ggml_is_empty(node) || node->op == GGML_OP_VIEW ||
-            node->op == GGML_OP_NONE) {
+        if (ggml_is_empty(node) || node->op == GGML_OP_RESHAPE ||
+            node->op == GGML_OP_TRANSPOSE || node->op == GGML_OP_VIEW ||
+            node->op == GGML_OP_PERMUTE || node->op == GGML_OP_NONE) {
             continue;
         }
 
@@ -627,29 +643,31 @@ GGML_CALL static bool ggml_backend_cann_supports_op(ggml_backend_t backend,
         case GGML_OP_MUL_MAT_ID:
         case GGML_OP_GET_ROWS:
         case GGML_OP_CPY:
-        case GGML_OP_DUP:
             return false;
+        case GGML_OP_DUP:
+            return true;
         case GGML_OP_REPEAT:
         case GGML_OP_CONCAT:
         case GGML_OP_NONE:
-            return true;
         case GGML_OP_RESHAPE:
         case GGML_OP_VIEW:
         case GGML_OP_PERMUTE:
         case GGML_OP_TRANSPOSE:
+            return true;
         case GGML_OP_NORM:
-            return false;
+            return true;
         case GGML_OP_ADD:
         case GGML_OP_MUL:
         case GGML_OP_DIV:
             return true;
         case GGML_OP_RMS_NORM:
-        case GGML_OP_SCALE:
             return false;
+        case GGML_OP_SCALE:
+            return true;
         case GGML_OP_SQR:
         case GGML_OP_CLAMP:
-            return true;
         case GGML_OP_CONT:
+            return true;
         case GGML_OP_DIAG_MASK_INF:
         case GGML_OP_SOFT_MAX:
         case GGML_OP_ROPE:
@@ -659,12 +677,13 @@ GGML_CALL static bool ggml_backend_cann_supports_op(ggml_backend_t backend,
         case GGML_OP_SUM_ROWS:
             return false;
         case GGML_OP_ARGSORT:
-            return false;
+            return true;
         case GGML_OP_ACC:
         case GGML_OP_GROUP_NORM:
         case GGML_OP_UPSCALE:
-        case GGML_OP_PAD:
             return false;
+        case GGML_OP_PAD:
+            return true;
         case GGML_OP_ARANGE:
             return true;
         case GGML_OP_TIMESTEP_EMBEDDING:

@@ -1,5 +1,8 @@
 #include "aclnn_ops.h"
 
+#include <aclnnop/aclnn_batch_norm.h>
+#include <aclnnop/aclnn_cast.h>
+
 #include <cmath>
 #include <cstring>
 #include <vector>
@@ -91,6 +94,8 @@ void ggml_cann_add(ggml_backend_cann_context& ctx, ggml_tensor* dst) {
 
     ACL_CHECK(aclnnAddGetWorkspaceSize(acl_src0, acl_src1, alpha, acl_dst,
                                        &workspaceSize, &executor));
+    // TODO, workspace should free after sync. Add alloc memory to
+    // backend_buffer.
     if (workspaceSize > 0) {
         ACL_CHECK(aclrtMalloc(&workspaceAddr, workspaceSize,
                               ACL_MEM_MALLOC_HUGE_FIRST));
@@ -265,11 +270,14 @@ void ggml_cann_clamp(ggml_backend_cann_context& ctx, ggml_tensor* dst) {
     }
 }
 
-// TODO: acl kernel only support INT64 for out tensors.
-void ggml_cann_argsort(ggml_backend_cann_context& ctx, ggml_tensor* dst) {
+void ggml_cann_scale(ggml_backend_cann_context& ctx, ggml_tensor* dst) {
     ggml_tensor* src = dst->src[0];
-    enum ggml_sort_order order = (enum ggml_sort_order)dst->op_params[0];
 
+    // scale factor
+    float v;
+    memcpy(&v, dst->op_params, sizeof(float));
+
+    aclScalar* scale = aclCreateScalar(&v, aclDataType::ACL_FLOAT);
     aclTensor* acl_src = create_acl_tensor(src);
     aclTensor* acl_dst = create_acl_tensor(dst);
 
@@ -277,19 +285,158 @@ void ggml_cann_argsort(ggml_backend_cann_context& ctx, ggml_tensor* dst) {
     aclOpExecutor* executor;
     void* workspaceAddr = nullptr;
 
-    ACL_CHECK(aclnnArgsortGetWorkspaceSize(
-        acl_src, 0, (order == GGML_SORT_ORDER_DESC ? true : false), acl_dst,
-        &workspaceSize, &executor));
+    ACL_CHECK(aclnnMulsGetWorkspaceSize(acl_src, scale, acl_dst, &workspaceSize,
+                                        &executor));
     if (workspaceSize > 0)
         ACL_CHECK(aclrtMalloc(&workspaceAddr, workspaceSize,
                               ACL_MEM_MALLOC_HUGE_FIRST));
 
     aclrtStream main_stream = ctx.stream();
+    ACL_CHECK(aclnnMuls(workspaceAddr, workspaceSize, executor, main_stream));
+
+    ACL_CHECK(aclDestroyScalar(scale));
+    ACL_CHECK(aclDestroyTensor(acl_src));
+    ACL_CHECK(aclDestroyTensor(acl_dst));
+
+    if (workspaceSize > 0) {
+        ACL_CHECK(aclrtFree(workspaceAddr));
+    }
+}
+
+void ggml_cann_argsort(ggml_backend_cann_context& ctx, ggml_tensor* dst) {
+    ggml_tensor* src = dst->src[0];
+    enum ggml_sort_order order = (enum ggml_sort_order)dst->op_params[0];
+
+    aclTensor* acl_src = create_acl_tensor(src);
+    aclTensor* acl_dst = create_acl_tensor(dst);
+    void* buffer = nullptr;
+    ACL_CHECK(aclrtMalloc(
+        &buffer, ggml_nbytes(dst) / ggml_type_size(dst->type) * sizeof(int64_t),
+        ACL_MEM_MALLOC_HUGE_FIRST));
+    aclTensor* tmp_tensor =
+        create_acl_tensor(buffer, ACL_INT64, ggml_type_size(dst->type), dst->ne,
+                          dst->nb, GGML_MAX_DIMS);
+
+    uint64_t workspaceSize = 0;
+    aclOpExecutor* executor;
+    void* workspaceAddr = nullptr;
+
+    ACL_CHECK(aclnnArgsortGetWorkspaceSize(
+        acl_src, -1, (order == GGML_SORT_ORDER_DESC ? true : false), tmp_tensor,
+        &workspaceSize, &executor));
+    if (workspaceSize > 0) {
+        ACL_CHECK(aclrtMalloc(&workspaceAddr, workspaceSize,
+                              ACL_MEM_MALLOC_HUGE_FIRST));
+    }
+
+    aclrtStream main_stream = ctx.stream();
     ACL_CHECK(
         aclnnArgsort(workspaceAddr, workspaceSize, executor, main_stream));
 
+    if (workspaceSize > 0) {
+        ACL_CHECK(aclrtFree(workspaceAddr));
+        workspaceSize = 0;
+    }
+
+    ACL_CHECK(aclnnCastGetWorkspaceSize(tmp_tensor, type_mapping(dst->type),
+                                        acl_dst, &workspaceSize, &executor));
+    if (workspaceSize > 0) {
+        ACL_CHECK(aclrtMalloc(&workspaceAddr, workspaceSize,
+                              ACL_MEM_MALLOC_HUGE_FIRST));
+    }
+
+    ACL_CHECK(aclnnCast(workspaceAddr, workspaceSize, executor, main_stream));
+
     ACL_CHECK(aclDestroyTensor(acl_src));
+    ACL_CHECK(aclDestroyTensor(tmp_tensor));
     ACL_CHECK(aclDestroyTensor(acl_dst));
+
+    // TODO: optimize argsort kernel or free tmp buffers after stream sync.
+    ACL_CHECK(aclrtSynchronizeStream(main_stream));
+    ACL_CHECK(aclrtFree(buffer));
+
+    if (workspaceSize > 0) {
+        ACL_CHECK(aclrtFree(workspaceAddr));
+    }
+}
+
+void ggml_cann_norm(ggml_backend_cann_context& ctx, ggml_tensor* dst) {
+    ggml_tensor* src = dst->src[0];
+
+    aclTensor* acl_src = create_acl_tensor(src);
+    aclTensor* acl_dst = create_acl_tensor(dst);
+
+    float eps;
+    memcpy(&eps, dst->op_params, sizeof(float));
+    float *weight_host, *bias_host;
+    int64_t channel = dst->ne[2];
+
+    weight_host = new float[channel];
+    bias_host = new float[channel];
+
+    for (int i = 0; i < channel; i++) {
+        weight_host[i] = 1;
+        bias_host[i] = 0;
+    }
+
+    aclrtStream stream = ctx.stream();
+
+    // Input tensors.
+    void *buffer, *acl_weight, *acl_bias, *acl_mean, *acl_invstd;
+    ACL_CHECK(aclrtMalloc(&buffer, 4 * channel * sizeof(float),
+                          ACL_MEM_MALLOC_HUGE_FIRST));
+    acl_weight = buffer;
+    acl_bias = acl_weight + sizeof(float) * channel;
+    acl_mean = acl_bias + sizeof(float) * channel;
+    acl_invstd = acl_mean + sizeof(float) * channel;
+
+    // Set input params.
+    ACL_CHECK(aclrtMemcpyAsync(acl_weight, channel, weight_host, channel,
+                               ACL_MEMCPY_HOST_TO_DEVICE, stream));
+    ACL_CHECK(aclrtMemcpyAsync(acl_bias, channel, bias_host, channel,
+                               ACL_MEMCPY_HOST_TO_DEVICE, stream));
+    delete[] weight_host;
+    delete[] bias_host;
+
+    // Create input tensors.
+    int64_t input_tensor_shape[] = {channel};
+    size_t input_tensor_stride[] = {1};
+    aclTensor* weight =
+        create_acl_tensor(acl_weight, ACL_FLOAT, sizeof(float),
+                          input_tensor_shape, input_tensor_stride, 1);
+    aclTensor* bias =
+        create_acl_tensor(acl_bias, ACL_FLOAT, sizeof(float),
+                          input_tensor_shape, input_tensor_stride, 1);
+    aclTensor* mean =
+        create_acl_tensor(acl_mean, ACL_FLOAT, sizeof(float),
+                          input_tensor_shape, input_tensor_stride, 1);
+    aclTensor* invstd =
+        create_acl_tensor(acl_invstd, ACL_FLOAT, sizeof(float),
+                          input_tensor_shape, input_tensor_stride, 1);
+
+    uint64_t workspaceSize = 0;
+    aclOpExecutor* executor;
+    void* workspaceAddr = nullptr;
+
+    ACL_CHECK(aclnnBatchNormGetWorkspaceSize(
+        acl_src, weight, bias, nullptr, nullptr, false, 0, eps, acl_dst, mean,
+        invstd, &workspaceSize, &executor));
+
+    if (workspaceSize > 0) {
+        ACL_CHECK(aclrtMalloc(&workspaceAddr, workspaceSize,
+                              ACL_MEM_MALLOC_HUGE_FIRST));
+    }
+
+    ACL_CHECK(aclnnBatchNorm(workspaceAddr, workspaceSize, executor, stream));
+
+    ACL_CHECK(aclDestroyTensor(weight));
+    ACL_CHECK(aclDestroyTensor(bias));
+    ACL_CHECK(aclDestroyTensor(mean));
+    ACL_CHECK(aclDestroyTensor(invstd));
+
+    // TODO: optimize argsort kernel or free tmp buffers after stream sync.
+    ACL_CHECK(aclrtSynchronizeStream(stream));
+    ACL_CHECK(aclrtFree(buffer));
 
     if (workspaceSize > 0) {
         ACL_CHECK(aclrtFree(workspaceAddr));

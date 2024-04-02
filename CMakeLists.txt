@@ -841,6 +841,20 @@ if (LLAMA_CANN)
             endif()
         endif()
 
+        # * libacl_op_compiler.so
+        if (LLAMA_CANN)
+            set(lib_dir "${CANN_INSTALL_DIR}/lib64")
+            find_library(found_lib_acl_op_compiler NAMES acl_op_compiler PATHS ${lib_dir} NO_DEFAULT_PATH)
+            if (found_lib_acl_op_compiler)
+                set(lib_acl_op_compiler ${found_lib_acl_op_compiler})
+                list(APPEND CANN_LIBRARIES ${lib_acl_op_compiler})
+                message(STATUS "CANN: libacl_op_compiler.so is found at ${lib_dir}")
+            else()
+                set(LLAMA_CANN OFF)
+                message(WARNING "CANN: Missing libacl_op_compiler.so. Turning off LLAMA_CANN")
+            endif()
+        endif()
+
         # Set headers and libs
         if (LLAMA_CANN)
             message(STATUS "CANN: CANN_INCLUDE_DIRS =  ${CANN_INCLUDE_DIRS}")
