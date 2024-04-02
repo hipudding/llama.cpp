@@ -1,4 +1,5 @@
-#pragma once
+#ifndef CANN_COMMON_H
+#define CANN_COMMON_H
 
 #include <acl/acl.h>
 
@@ -80,3 +81,5 @@ struct ggml_backend_cann_context {
 
     aclrtStream stream() { return stream(device, 0); }
 };
+
+#endif //CANN_COMMON_H

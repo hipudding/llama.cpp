@@ -1,3 +1,6 @@
+#ifndef CANN_ACLNN_OPS
+#define CANN_ACLNN_OPS
+
 #include <aclnnop/aclnn_add.h>
 #include <aclnnop/aclnn_arange.h>
 #include <aclnnop/aclnn_argsort.h>
@@ -30,7 +33,11 @@ void ggml_cann_sqr(ggml_backend_cann_context& ctx, ggml_tensor* dst);
 
 void ggml_cann_clamp(ggml_backend_cann_context& ctx, ggml_tensor* dst);
 
+void ggml_cann_scale(ggml_backend_cann_context& ctx, ggml_tensor* dst);
+
 void ggml_cann_argsort(ggml_backend_cann_context& ctx, ggml_tensor* dst);
+
+void ggml_cann_norm(ggml_backend_cann_context& ctx, ggml_tensor* dst);
 
 template <aclnnStatus getWorkspaceSize(const aclTensor*, const aclTensor*,
                                        aclTensor*, uint64_t*, aclOpExecutor**),
@@ -148,3 +155,5 @@ void ggml_cann_activation(ggml_backend_cann_context& ctx, ggml_tensor* dst) {
         ACL_CHECK(aclrtFree(workspaceAddr));
     }
 }
+
+#endif  // CANN_ACLNN_OPS

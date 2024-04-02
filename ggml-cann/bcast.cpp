@@ -1,4 +1,6 @@
 #include "bcast.h"
+#include <algorithm>
+#include <cstring>
 
 /**
  * Mapping ggml_tensor type to acl_tensor type.
@@ -29,7 +31,7 @@ aclDataType type_mapping(ggml_type type) {
  * otherwise, use bcast_ne bcast_stride, which means tensor dims should be
  * changed to satisfy the broadcast. @sa: get_bcast_shape.
  */
-aclTensor* create_acl_tensor(const ggml_tensor* tensor, const int64_t* bcast_ne,
+aclTensor* create_acl_tensor(const ggml_tensor* tensor, int64_t* bcast_ne,
                              int64_t* bcast_stride, int64_t bcast_dims) {
     size_t size = ggml_nbytes(tensor);
     void* deviceAddr = nullptr;
@@ -62,9 +64,33 @@ aclTensor* create_acl_tensor(const ggml_tensor* tensor, const int64_t* bcast_ne,
     }
 
     int64_t dims = (bcast_dims == 0 ? GGML_MAX_DIMS : bcast_dims);
+    std::reverse(acl_ne, acl_ne + dims);
+    std::reverse(acl_stride, acl_stride + dims);
+
     aclTensor* acl_tensor =
         aclCreateTensor(acl_ne, dims, type_mapping(tensor->type), acl_stride, 0,
                         aclFormat::ACL_FORMAT_ND, acl_ne, dims, deviceAddr);
+
+    return acl_tensor;
+}
+
+aclTensor* create_acl_tensor(void* data_ptr, aclDataType dtype, size_t type_size, int64_t* ne,
+                             size_t* nb, int64_t dims) {
+    
+    int64_t tmp_ne[GGML_MAX_DIMS * 2];
+    int64_t tmp_stride[GGML_MAX_DIMS * 2];
+
+    memcpy(tmp_ne, ne, dims * sizeof(int64_t));
+    for (int i = 0; i < dims; i++) {
+        tmp_stride[i] = nb[i] / type_size;
+    }
+
+    std::reverse(tmp_ne, tmp_ne + dims);
+    std::reverse(tmp_stride, tmp_stride + dims);
+
+    aclTensor* acl_tensor =
+        aclCreateTensor(tmp_ne, dims, dtype, tmp_stride, 0,
+                        aclFormat::ACL_FORMAT_ND, tmp_ne, dims, data_ptr);
 
     return acl_tensor;
 }
