@@ -1,6 +1,6 @@
 #include "aclnn_ops.h"
 
-#include <aclnnop/aclnn_batch_norm.h>
+#include <aclnnop/aclnn_layer_norm.h>
 #include <aclnnop/aclnn_cast.h>
 
 #include <cmath>
@@ -368,77 +368,32 @@ void ggml_cann_norm(ggml_backend_cann_context& ctx, ggml_tensor* dst) {
 
     float eps;
     memcpy(&eps, dst->op_params, sizeof(float));
-    float *weight_host, *bias_host;
-    int64_t channel = dst->ne[2];
-
-    weight_host = new float[channel];
-    bias_host = new float[channel];
-
-    for (int i = 0; i < channel; i++) {
-        weight_host[i] = 1;
-        bias_host[i] = 0;
-    }
-
-    aclrtStream stream = ctx.stream();
-
-    // Input tensors.
-    void *buffer, *acl_weight, *acl_bias, *acl_mean, *acl_invstd;
-    ACL_CHECK(aclrtMalloc(&buffer, 4 * channel * sizeof(float),
-                          ACL_MEM_MALLOC_HUGE_FIRST));
-    acl_weight = buffer;
-    acl_bias = acl_weight + sizeof(float) * channel;
-    acl_mean = acl_bias + sizeof(float) * channel;
-    acl_invstd = acl_mean + sizeof(float) * channel;
-
-    // Set input params.
-    ACL_CHECK(aclrtMemcpyAsync(acl_weight, channel, weight_host, channel,
-                               ACL_MEMCPY_HOST_TO_DEVICE, stream));
-    ACL_CHECK(aclrtMemcpyAsync(acl_bias, channel, bias_host, channel,
-                               ACL_MEMCPY_HOST_TO_DEVICE, stream));
-    delete[] weight_host;
-    delete[] bias_host;
-
-    // Create input tensors.
-    int64_t input_tensor_shape[] = {channel};
-    size_t input_tensor_stride[] = {1};
-    aclTensor* weight =
-        create_acl_tensor(acl_weight, ACL_FLOAT, sizeof(float),
-                          input_tensor_shape, input_tensor_stride, 1);
-    aclTensor* bias =
-        create_acl_tensor(acl_bias, ACL_FLOAT, sizeof(float),
-                          input_tensor_shape, input_tensor_stride, 1);
-    aclTensor* mean =
-        create_acl_tensor(acl_mean, ACL_FLOAT, sizeof(float),
-                          input_tensor_shape, input_tensor_stride, 1);
-    aclTensor* invstd =
-        create_acl_tensor(acl_invstd, ACL_FLOAT, sizeof(float),
-                          input_tensor_shape, input_tensor_stride, 1);
 
     uint64_t workspaceSize = 0;
     aclOpExecutor* executor;
     void* workspaceAddr = nullptr;
 
-    ACL_CHECK(aclnnBatchNormGetWorkspaceSize(
-        acl_src, weight, bias, nullptr, nullptr, false, 0, eps, acl_dst, mean,
-        invstd, &workspaceSize, &executor));
+    std::vector<int64_t> normData = {dst->ne[0]};
+    aclIntArray* norm = aclCreateIntArray(normData.data(), normData.size());
+    ACL_CHECK(aclnnLayerNormGetWorkspaceSize(acl_src, norm, nullptr, nullptr, eps,
+                                             acl_dst, nullptr, nullptr,
+                                             &workspaceSize, &executor));
 
     if (workspaceSize > 0) {
         ACL_CHECK(aclrtMalloc(&workspaceAddr, workspaceSize,
                               ACL_MEM_MALLOC_HUGE_FIRST));
     }
 
-    ACL_CHECK(aclnnBatchNorm(workspaceAddr, workspaceSize, executor, stream));
+    aclrtStream stream = ctx.stream();
 
-    ACL_CHECK(aclDestroyTensor(weight));
-    ACL_CHECK(aclDestroyTensor(bias));
-    ACL_CHECK(aclDestroyTensor(mean));
-    ACL_CHECK(aclDestroyTensor(invstd));
+    ACL_CHECK(aclnnLayerNorm(workspaceAddr, workspaceSize, executor, stream));
 
-    // TODO: optimize argsort kernel or free tmp buffers after stream sync.
-    ACL_CHECK(aclrtSynchronizeStream(stream));
-    ACL_CHECK(aclrtFree(buffer));
+    ACL_CHECK(aclDestroyIntArray(norm));
+    ACL_CHECK(aclDestroyTensor(acl_src));
+    ACL_CHECK(aclDestroyTensor(acl_dst));
 
     if (workspaceSize > 0) {
         ACL_CHECK(aclrtFree(workspaceAddr));
     }
 }
+

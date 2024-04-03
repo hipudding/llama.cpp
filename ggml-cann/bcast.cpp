@@ -27,12 +27,12 @@ aclDataType type_mapping(ggml_type type) {
  * Transform ggml_tensor to acl_tensor. Note that ggml_tensor dimension order
  * is reversed compared to acl_tensor.
  *
- * If bcast_ne and bcast_stride is nullptr, use ggml_tensor's ne and nb.
- * otherwise, use bcast_ne bcast_stride, which means tensor dims should be
+ * If bcast_ne and bcast_nb is nullptr, use ggml_tensor's ne and nb.
+ * otherwise, use bcast_ne bcast_nb, which means tensor dims should be
  * changed to satisfy the broadcast. @sa: get_bcast_shape.
  */
 aclTensor* create_acl_tensor(const ggml_tensor* tensor, int64_t* bcast_ne,
-                             int64_t* bcast_stride, int64_t bcast_dims) {
+                             size_t* bcast_nb, int64_t bcast_dims, aclFormat format) {
     size_t size = ggml_nbytes(tensor);
     void* deviceAddr = nullptr;
 
@@ -53,13 +53,13 @@ aclTensor* create_acl_tensor(const ggml_tensor* tensor, int64_t* bcast_ne,
         for (int i = 0; i < GGML_MAX_DIMS; i++) {
             acl_ne[i] = tensor->ne[i];
             // The step size of acl is in elements.
-            acl_stride[i] = tensor->nb[i] / tensor->nb[0];
+            acl_stride[i] = tensor->nb[i] / ggml_type_size(tensor->type);
         }
     } else {
         // With bcast
         for (int i = 0; i < bcast_dims; i++) {
             acl_ne[i] = bcast_ne[i];
-            acl_stride[i] = bcast_stride[i] / tensor->nb[0];
+            acl_stride[i] = bcast_nb[i] / ggml_type_size(tensor->type);
         }
     }
 
@@ -69,13 +69,13 @@ aclTensor* create_acl_tensor(const ggml_tensor* tensor, int64_t* bcast_ne,
 
     aclTensor* acl_tensor =
         aclCreateTensor(acl_ne, dims, type_mapping(tensor->type), acl_stride, 0,
-                        aclFormat::ACL_FORMAT_ND, acl_ne, dims, deviceAddr);
+                        format, acl_ne, dims, deviceAddr);
 
     return acl_tensor;
 }
 
 aclTensor* create_acl_tensor(void* data_ptr, aclDataType dtype, size_t type_size, int64_t* ne,
-                             size_t* nb, int64_t dims) {
+                             size_t* nb, int64_t dims, aclFormat format) {
     
     int64_t tmp_ne[GGML_MAX_DIMS * 2];
     int64_t tmp_stride[GGML_MAX_DIMS * 2];
@@ -90,7 +90,7 @@ aclTensor* create_acl_tensor(void* data_ptr, aclDataType dtype, size_t type_size
 
     aclTensor* acl_tensor =
         aclCreateTensor(tmp_ne, dims, dtype, tmp_stride, 0,
-                        aclFormat::ACL_FORMAT_ND, tmp_ne, dims, data_ptr);
+                        format, tmp_ne, dims, data_ptr);
 
     return acl_tensor;
 }
@@ -132,26 +132,26 @@ aclTensor* create_acl_tensor(void* data_ptr, aclDataType dtype, size_t type_size
  */
 int64_t get_bcast_shape(const ggml_tensor* src0, const ggml_tensor* src1,
                         int64_t* bcast_ne_src0, int64_t* bcast_ne_src1,
-                        int64_t* bcast_stride_src0,
-                        int64_t* bcast_stride_src1) {
+                        size_t* bcast_nb_src0,
+                        size_t* bcast_nb_src1) {
     GGML_ASSERT(ggml_can_repeat(src1, src0));
     int bcast_dim_cnt = 0;
     for (int i = 0; i < GGML_MAX_DIMS; i++) {
         int64_t nr = src0->ne[i] / src1->ne[i];
         bcast_ne_src0[bcast_dim_cnt] = src0->ne[i] / nr;
         bcast_ne_src1[bcast_dim_cnt] = src1->ne[i];
-        bcast_stride_src0[bcast_dim_cnt] = src0->nb[i];
-        bcast_stride_src1[bcast_dim_cnt] = src1->nb[i];
+        bcast_nb_src0[bcast_dim_cnt] = src0->nb[i];
+        bcast_nb_src1[bcast_dim_cnt] = src1->nb[i];
         bcast_dim_cnt++;
         if (nr != 1) {
             // Need to add an extra dim.
             bcast_ne_src0[bcast_dim_cnt] = nr;
             bcast_ne_src1[bcast_dim_cnt] = 1;
-            bcast_stride_src0[bcast_dim_cnt] =
-                bcast_stride_src0[bcast_dim_cnt - 1] *
+            bcast_nb_src0[bcast_dim_cnt] =
+                bcast_nb_src0[bcast_dim_cnt - 1] *
                 bcast_ne_src0[bcast_dim_cnt - 1];
-            bcast_stride_src1[bcast_dim_cnt] =
-                bcast_stride_src1[bcast_dim_cnt - 1] *
+            bcast_nb_src1[bcast_dim_cnt] =
+                bcast_nb_src1[bcast_dim_cnt - 1] *
                 bcast_ne_src1[bcast_dim_cnt - 1];
             bcast_dim_cnt++;
         }
