@@ -429,6 +429,7 @@ static bool ggml_cann_compute_forward(ggml_backend_cann_context& ctx,
             return false;
         case GGML_OP_CONT:
             ggml_cann_cont(ctx, dst);
+            break;
         case GGML_OP_NONE:
         case GGML_OP_RESHAPE:
         case GGML_OP_VIEW:
@@ -445,12 +446,13 @@ static bool ggml_cann_compute_forward(ggml_backend_cann_context& ctx,
         case GGML_OP_ALIBI:
         case GGML_OP_IM2COL:
         case GGML_OP_POOL_2D:
-        case GGML_OP_SUM_ROWS:
             return false;
+        case GGML_OP_SUM_ROWS:
+            ggml_cann_sum_rows(ctx, dst);
+            break;
         case GGML_OP_ARGSORT:
             ggml_cann_argsort(ctx, dst);
             break;
-            return false;
         default:
             return false;
     }
@@ -651,7 +653,6 @@ GGML_CALL static bool ggml_backend_cann_supports_op(ggml_backend_t backend,
         case GGML_OP_CPY:
             return false;
         case GGML_OP_DUP:
-            return true;
         case GGML_OP_REPEAT:
         case GGML_OP_CONCAT:
         case GGML_OP_NONE:
@@ -659,9 +660,7 @@ GGML_CALL static bool ggml_backend_cann_supports_op(ggml_backend_t backend,
         case GGML_OP_VIEW:
         case GGML_OP_PERMUTE:
         case GGML_OP_TRANSPOSE:
-            return true;
         case GGML_OP_NORM:
-            return true;
         case GGML_OP_ADD:
         case GGML_OP_MUL:
         case GGML_OP_DIV:
@@ -669,7 +668,6 @@ GGML_CALL static bool ggml_backend_cann_supports_op(ggml_backend_t backend,
         case GGML_OP_RMS_NORM:
             return false;
         case GGML_OP_SCALE:
-            return true;
         case GGML_OP_SQR:
         case GGML_OP_CLAMP:
         case GGML_OP_CONT:
@@ -682,18 +680,15 @@ GGML_CALL static bool ggml_backend_cann_supports_op(ggml_backend_t backend,
         case GGML_OP_ALIBI:
         case GGML_OP_IM2COL:
         case GGML_OP_POOL_2D:
-        case GGML_OP_SUM_ROWS:
             return false;
+        case GGML_OP_SUM_ROWS:
         case GGML_OP_ARGSORT:
-            return true;
         case GGML_OP_ACC:
-            return true;
         case GGML_OP_GROUP_NORM:
             return true;
         case GGML_OP_UPSCALE:
             return false;
         case GGML_OP_PAD:
-            return true;
         case GGML_OP_ARANGE:
             return true;
         case GGML_OP_TIMESTEP_EMBEDDING:
