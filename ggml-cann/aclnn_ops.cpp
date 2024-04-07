@@ -5,6 +5,7 @@
 #include <aclnnop/aclnn_layer_norm.h>
 #include <aclnnop/aclnn_repeat.h>
 #include <aclnnop/aclnn_softmax.h>
+#include <aclnnop/aclnn_upsample_nearest_2d.h>
 #include <aclnnop/aclnn_reduce_sum.h>
 
 #include <cmath>
@@ -486,10 +487,6 @@ void ggml_cann_sum_rows(ggml_backend_cann_context& ctx, ggml_tensor* dst) {
     GGML_ASSERT(dst->ne[0] == 1);
     aclTensor* acl_dst = create_acl_tensor(dst);
 
-    uint64_t workspaceSize = 0;
-    aclOpExecutor* executor;
-    void* workspaceAddr = nullptr;
-
     int64_t reduce_dims_host[] = {3};
     aclIntArray* reduce_dims = aclCreateIntArray(reduce_dims_host, 1);
 
@@ -503,6 +500,41 @@ void ggml_cann_sum_rows(ggml_backend_cann_context& ctx, ggml_tensor* dst) {
     aclrtStream stream = ctx.stream();
     ACL_CHECK(aclnnReduceSum(workspaceAddr, workspaceSize, executor, stream));
 
+    ACL_CHECK(aclDestroyTensor(acl_src));
+    ACL_CHECK(aclDestroyTensor(acl_dst));
+}
+
+void ggml_cann_upsample_nearest2d(ggml_backend_cann_context& ctx, 
+    ggml_tensor* dst) {
+
+    ggml_tensor* src = dst->src[0];
+
+    aclTensor* acl_src = create_acl_tensor(src, nullptr, nullptr, 0, 
+                                           ACL_FORMAT_NCHW);
+    aclTensor* acl_dst = create_acl_tensor(dst, nullptr, nullptr, 0, 
+                                           ACL_FORMAT_NCHW);
+
+    const int scale_factor = dst->op_params[0];
+    std::vector<int64_t> output_size{dst->ne[1], dst->ne[0]};
+    auto output_size_array = aclCreateIntArray(output_size.data(), 2);
+    
+    uint64_t workspaceSize = 0;
+    aclOpExecutor* executor;
+    void* workspaceAddr = nullptr;
+
+    aclrtStream stream = ctx.stream();
+
+    ACL_CHECK(aclnnUpsampleNearest2dGetWorkspaceSize(acl_src, output_size_array, 
+                                                     acl_dst, &workspaceSize, 
+                                                     &executor));
+    if (workspaceSize > 0) {
+        workspaceAddr = ctx.alloc_buffer(workspaceSize);
+    }
+    
+    ACL_CHECK(aclnnUpsampleNearest2d(workspaceAddr, workspaceSize, executor, 
+                                     stream));
+    
+    ACL_CHECK(aclDestroyIntArray(output_size_array));
     ACL_CHECK(aclDestroyTensor(acl_src));
     ACL_CHECK(aclDestroyTensor(acl_dst));
 }
