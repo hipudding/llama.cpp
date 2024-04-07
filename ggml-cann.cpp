@@ -400,7 +400,8 @@ static bool ggml_cann_compute_forward(ggml_backend_cann_context& ctx,
             break;
         // TODO: Format need NC1HWC0.
         case GGML_OP_UPSCALE:
-            return false;
+            ggml_cann_upsample_nearest2d(ctx, dst);
+            break;
         case GGML_OP_PAD:
             ggml_cann_pad(ctx, dst);
             break;
@@ -687,7 +688,7 @@ GGML_CALL static bool ggml_backend_cann_supports_op(ggml_backend_t backend,
         case GGML_OP_GROUP_NORM:
             return true;
         case GGML_OP_UPSCALE:
-            return false;
+            return true;
         case GGML_OP_PAD:
         case GGML_OP_ARANGE:
             return true;
