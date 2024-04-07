@@ -41,6 +41,8 @@ void ggml_cann_norm(ggml_backend_cann_context& ctx, ggml_tensor* dst);
 
 void ggml_cann_group_norm(ggml_backend_cann_context& ctx, ggml_tensor* dst);
 
+void ggml_cann_softmax(ggml_backend_cann_context& ctx, ggml_tensor* dst);
+
 template <aclnnStatus getWorkspaceSize(const aclTensor*, const aclTensor*,
                                        aclTensor*, uint64_t*, aclOpExecutor**),
           aclnnStatus execute(void*, uint64_t, aclOpExecutor*, aclrtStream)>
@@ -72,8 +74,7 @@ void ggml_cann_mul_div(ggml_backend_cann_context& ctx, ggml_tensor* dst) {
     ACL_CHECK(getWorkspaceSize(acl_src0, acl_src1, acl_dst, &workspaceSize,
                                &executor));
     if (workspaceSize > 0) {
-        ACL_CHECK(aclrtMalloc(&workspaceAddr, workspaceSize,
-                              ACL_MEM_MALLOC_HUGE_FIRST));
+        workspaceAddr = ctx.alloc_buffer(workspaceSize);
     }
 
     aclrtStream main_stream = ctx.stream();
@@ -82,10 +83,6 @@ void ggml_cann_mul_div(ggml_backend_cann_context& ctx, ggml_tensor* dst) {
     ACL_CHECK(aclDestroyTensor(acl_src0));
     ACL_CHECK(aclDestroyTensor(acl_src1));
     ACL_CHECK(aclDestroyTensor(acl_dst));
-
-    if (workspaceSize > 0) {
-        ACL_CHECK(aclrtFree(workspaceAddr));
-    }
 }
 
 // Activation functions template.
@@ -108,8 +105,7 @@ void ggml_cann_activation(ggml_backend_cann_context& ctx, ggml_tensor* dst) {
 
     ACL_CHECK(getWorkspaceSize(acl_src, acl_dst, &workspaceSize, &executor));
     if (workspaceSize > 0) {
-        ACL_CHECK(aclrtMalloc(&workspaceAddr, workspaceSize,
-                              ACL_MEM_MALLOC_HUGE_FIRST));
+        workspaceAddr = ctx.alloc_buffer(workspaceSize);
     }
 
     aclrtStream main_stream = ctx.stream();
@@ -117,10 +113,6 @@ void ggml_cann_activation(ggml_backend_cann_context& ctx, ggml_tensor* dst) {
 
     ACL_CHECK(aclDestroyTensor(acl_src));
     ACL_CHECK(aclDestroyTensor(acl_dst));
-
-    if (workspaceSize > 0) {
-        ACL_CHECK(aclrtFree(workspaceAddr));
-    }
 }
 
 // Activation functions template for const aclTensors.
@@ -143,8 +135,7 @@ void ggml_cann_activation(ggml_backend_cann_context& ctx, ggml_tensor* dst) {
 
     ACL_CHECK(getWorkspaceSize(acl_src, acl_dst, &workspaceSize, &executor));
     if (workspaceSize > 0) {
-        ACL_CHECK(aclrtMalloc(&workspaceAddr, workspaceSize,
-                              ACL_MEM_MALLOC_HUGE_FIRST));
+        workspaceAddr = ctx.alloc_buffer(workspaceSize);
     }
 
     aclrtStream main_stream = ctx.stream();
@@ -152,10 +143,6 @@ void ggml_cann_activation(ggml_backend_cann_context& ctx, ggml_tensor* dst) {
 
     ACL_CHECK(aclDestroyTensor(acl_src));
     ACL_CHECK(aclDestroyTensor(acl_dst));
-
-    if (workspaceSize > 0) {
-        ACL_CHECK(aclrtFree(workspaceAddr));
-    }
 }
 
 #endif  // CANN_ACLNN_OPS
