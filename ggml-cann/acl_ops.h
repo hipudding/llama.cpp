@@ -7,7 +7,7 @@
 #include <string>
 #include <vector>
 
-#include "bcast.h"
+#include "acl_tensor.h"
 #include "common.h"
 
 struct OpCaller {
@@ -38,17 +38,16 @@ struct OpCaller {
     OpCaller& attr(float value, const char* name);
 
     template <typename T>
-    OpCaller& input(T* values, aclDataType dtype, size_t dims, int64_t* dim,
+    OpCaller& input(ggml_backend_cann_context& ctx, T* values,
+                    aclDataType dtype, size_t dims, int64_t* dim,
                     const char* name, aclrtStream stream = nullptr) {
-        void* device_ptr = nullptr;
         size_t n_elem = 1;
         for (size_t i = 0; i < dims; i++) {
             n_elem *= dim[i];
         }
 
         size_t n_bytes = n_elem * sizeof(T);
-        ACL_CHECK(aclrtMalloc(&device_ptr, n_bytes, ACL_MEM_MALLOC_HUGE_FIRST));
-        ptrs.push_back(device_ptr);
+        void* device_ptr = ctx.alloc_buffer(n_bytes);
         if (stream == nullptr) {
             ACL_CHECK(aclrtMemcpy(device_ptr, n_bytes, values, n_bytes,
                                   ACL_MEMCPY_HOST_TO_DEVICE));

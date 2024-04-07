@@ -6,17 +6,9 @@
 #include <mutex>
 
 #include "ggml-backend-impl.h"
+#include "ggml-cann/acl_ops.h"
 #include "ggml-cann/aclnn_ops.h"
 #include "ggml-cann/common.h"
-#include "ggml-cann/acl_ops.h"
-
-struct AclLifeCycle {
-    AclLifeCycle() { ACL_CHECK(aclInit(nullptr)); }
-
-    ~AclLifeCycle() { ACL_CHECK(aclFinalize()); }
-};
-
-AclLifeCycle acl_life_cycle;
 
 [[noreturn]] void ggml_cann_error(const char* stmt, const char* func,
                                   const char* file, int line, const char* msg) {
@@ -477,9 +469,15 @@ GGML_CALL static void ggml_backend_cann_free(ggml_backend_t backend) {
     ggml_backend_cann_context* cann_ctx =
         (ggml_backend_cann_context*)backend->context;
     ACL_CHECK(aclrtSynchronizeDevice());
+    cann_ctx->free_buffers();
     ACL_CHECK(aclrtResetDevice(cann_ctx->device));
     delete cann_ctx;
     delete backend;
+
+    // Finalize when last device freed.
+    if (cann_ctx->device == ggml_backend_cann_get_device_count() - 1) {
+        ACL_CHECK(aclFinalize());
+    }
 }
 
 GGML_CALL static ggml_backend_buffer_type_t
@@ -678,7 +676,7 @@ GGML_CALL static bool ggml_backend_cann_supports_op(ggml_backend_t backend,
         case GGML_OP_DIAG_MASK_INF:
             return false;
         case GGML_OP_SOFT_MAX:
-             return true;
+            return true;
         case GGML_OP_ROPE:
         case GGML_OP_ALIBI:
         case GGML_OP_IM2COL:
@@ -844,6 +842,7 @@ GGML_CALL static ggml_backend_t ggml_backend_reg_cann_init(const char* params,
 extern "C" GGML_CALL int ggml_backend_cann_reg_devices();
 
 GGML_CALL int ggml_backend_cann_reg_devices() {
+    ACL_CHECK(aclInit(nullptr));
     uint32_t device_count = ggml_backend_cann_get_device_count();
     // initialization
     for (uint32_t i = 0; i < device_count; i++) {

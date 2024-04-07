@@ -1,5 +1,5 @@
-#ifndef CANN_BCAST_H
-#define CANN_BCAST_H
+#ifndef CANN_ACL_TENSOR_H
+#define CANN_ACL_TENSOR_H
 
 #include <aclnn/aclnn_base.h>
 
@@ -10,8 +10,7 @@ aclDataType type_mapping(ggml_type type);
 
 aclTensor* create_acl_tensor(const ggml_tensor* tensor,
                              int64_t* bcast_ne = nullptr,
-                             size_t* bcast_nb = nullptr,
-                             int64_t bcast_dims = 0,
+                             size_t* bcast_nb = nullptr, int64_t bcast_dims = 0,
                              aclFormat format = ACL_FORMAT_ND);
 
 aclTensor* create_acl_tensor(void* data_ptr, aclDataType dtype,
@@ -28,12 +27,12 @@ int64_t get_bcast_shape(const ggml_tensor* src0, const ggml_tensor* src1,
 #define BCAST_SHAPE(src0, src1)                                       \
     int64_t bcast_ne_##src0[GGML_MAX_DIMS * 2];                       \
     int64_t bcast_ne_##src1[GGML_MAX_DIMS * 2];                       \
-    size_t bcast_nb_##src0[GGML_MAX_DIMS * 2];                   \
-    size_t bcast_nb_##src1[GGML_MAX_DIMS * 2];                   \
+    size_t bcast_nb_##src0[GGML_MAX_DIMS * 2];                        \
+    size_t bcast_nb_##src1[GGML_MAX_DIMS * 2];                        \
     int64_t bcast_dims =                                              \
         get_bcast_shape(src0, src1, bcast_ne_##src0, bcast_ne_##src1, \
                         bcast_nb_##src0, bcast_nb_##src1);
 
 #define BCAST_PARAM(src) bcast_ne_##src, bcast_nb_##src, bcast_dims
 
-#endif  // CANN_BCAST_H
+#endif  // CANN_ACL_TENSOR_H

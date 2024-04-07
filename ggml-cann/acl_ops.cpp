@@ -15,10 +15,6 @@ OpCaller::~OpCaller() {
     for (aclDataBuffer* buffer : output_buffers) {
         aclDestroyDataBuffer(buffer);
     }
-    // TODO: may free before use.
-    for (void* ptr : ptrs) {
-        aclrtFree(ptr);
-    }
     aclopDestroyAttr(attrs);
 }
 
@@ -100,20 +96,21 @@ void ggml_cann_cont(ggml_backend_cann_context& ctx, ggml_tensor* dst) {
     OpCaller op;
     op.name("ViewCopy")
         .input_no_contiguous(dst, "dst")
-        .input(dst->ne, ACL_INT64, 1, size_stride_dim, "dst_size", ctx.stream())
-        .input(dst_stride, ACL_INT64, 1, size_stride_dim, "dst_stride",
+        .input(ctx, dst->ne, ACL_INT64, 1, size_stride_dim, "dst_size",
                ctx.stream())
-        .input(storage_offset, ACL_INT64, 1, storage_offset_dim,
+        .input(ctx, dst_stride, ACL_INT64, 1, size_stride_dim, "dst_stride",
+               ctx.stream())
+        .input(ctx, storage_offset, ACL_INT64, 1, storage_offset_dim,
                "dst_storage_offset", ctx.stream())
         .input_no_contiguous(src, "src")
-        .input(src->ne, ACL_INT64, 1, size_stride_dim, "src_size", ctx.stream())
-        .input(src_stride, ACL_INT64, 1, size_stride_dim, "src_stride",
+        .input(ctx, src->ne, ACL_INT64, 1, size_stride_dim, "src_size",
                ctx.stream())
-        .input(storage_offset, ACL_INT64, 1, storage_offset_dim,
+        .input(ctx, src_stride, ACL_INT64, 1, size_stride_dim, "src_stride",
+               ctx.stream())
+        .input(ctx, storage_offset, ACL_INT64, 1, storage_offset_dim,
                "src_storage_offset", ctx.stream())
         .output(dst, "dst")
         .run(ctx.stream());
-    //aclrtSynchronizeStream(ctx.stream());
 }
 
 void ggml_cann_pad(ggml_backend_cann_context& ctx, ggml_tensor* dst) {
@@ -125,8 +122,7 @@ void ggml_cann_pad(ggml_backend_cann_context& ctx, ggml_tensor* dst) {
     OpCaller op;
     op.name("Pad")
         .input(src, "x")
-        .input(paddings, ACL_INT64, 2, dim, "paddings", ctx.stream())
+        .input(ctx, paddings, ACL_INT64, 2, dim, "paddings", ctx.stream())
         .output(dst, "y")
         .run(ctx.stream());
-    //aclrtSynchronizeStream(ctx.stream());
 }

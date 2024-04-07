@@ -16,7 +16,7 @@
 #include <aclnnop/aclnn_silu.h>
 #include <aclnnop/aclnn_tanh.h>
 
-#include "bcast.h"
+#include "acl_tensor.h"
 #include "common.h"
 
 void ggml_cann_repeat(ggml_backend_cann_context& ctx, ggml_tensor* dst);

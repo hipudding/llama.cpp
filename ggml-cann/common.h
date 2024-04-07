@@ -81,9 +81,7 @@ struct ggml_backend_cann_context {
         return buffer;
     }
 
-    void* alloc_buffer(size_t size) {
-        return alloc_buffer(size, 0);
-    }
+    void* alloc_buffer(size_t size) { return alloc_buffer(size, 0); }
 
     void free_buffers() {
         for (int i = 0; i < GGML_CANN_MAX_STREAMS; i++) {
@@ -107,6 +105,4 @@ struct ggml_backend_cann_context {
     aclrtStream stream() { return stream(0); }
 };
 
-
-
-#endif //CANN_COMMON_H
+#endif  // CANN_COMMON_H
