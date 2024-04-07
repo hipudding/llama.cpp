@@ -444,7 +444,10 @@ static bool ggml_cann_compute_forward(ggml_backend_cann_context& ctx,
             // Do nothing with these ops.
             break;
         case GGML_OP_DIAG_MASK_INF:
+            return false;
         case GGML_OP_SOFT_MAX:
+            ggml_cann_softmax(ctx, dst);
+            break;
         case GGML_OP_ROPE:
         case GGML_OP_ALIBI:
         case GGML_OP_IM2COL:
@@ -595,6 +598,9 @@ GGML_CALL static void ggml_backend_cann_synchronize(ggml_backend_t backend) {
         (ggml_backend_cann_context*)backend->context;
 
     ACL_CHECK(aclrtSynchronizeStream(cann_ctx->stream()));
+
+    // Free temp buffers binding to each stream.
+    cann_ctx->free_buffers();
 }
 
 GGML_CALL static enum ggml_status ggml_backend_cann_graph_compute(
@@ -670,7 +676,9 @@ GGML_CALL static bool ggml_backend_cann_supports_op(ggml_backend_t backend,
         case GGML_OP_CONT:
             return true;
         case GGML_OP_DIAG_MASK_INF:
+            return false;
         case GGML_OP_SOFT_MAX:
+             return true;
         case GGML_OP_ROPE:
         case GGML_OP_ALIBI:
         case GGML_OP_IM2COL:

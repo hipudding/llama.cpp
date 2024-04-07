@@ -6,6 +6,7 @@
 #include <cstdio>
 #include <iostream>
 #include <string>
+#include <vector>
 
 #include "../ggml-cann.h"
 #include "../ggml.h"
@@ -52,8 +53,10 @@ struct ggml_backend_cann_context {
     std::string name;
     aclrtEvent copy_event = nullptr;
 
-    aclrtStream streams[GGML_CANN_MAX_DEVICES][GGML_CANN_MAX_STREAMS] = {
-        {nullptr}};
+    aclrtStream streams[GGML_CANN_MAX_STREAMS] = {{nullptr}};
+
+    // bind temp buffers to stream. Free after sync.
+    std::vector<void*> buffers[GGML_CANN_MAX_STREAMS];
 
     explicit ggml_backend_cann_context(int device)
         : device(device), name(GGML_CANN_NAME + std::to_string(device)) {}
@@ -62,24 +65,48 @@ struct ggml_backend_cann_context {
         if (copy_event != nullptr) {
             ACL_CHECK(aclrtDestroyEvent(copy_event));
         }
-        for (int i = 0; i < GGML_CANN_MAX_DEVICES; ++i) {
-            for (int j = 0; j < GGML_CANN_MAX_STREAMS; ++j) {
-                if (streams[i][j] != nullptr) {
-                    ACL_CHECK(aclrtDestroyStream(streams[i][j]));
-                }
+        for (int i = 0; i < GGML_CANN_MAX_STREAMS; ++i) {
+            if (streams[i] != nullptr) {
+                ACL_CHECK(aclrtDestroyStream(streams[i]));
+                // Buffers should have been freed.
+                GGML_ASSERT(buffers[i].size() == 0);
             }
         }
     }
 
-    aclrtStream stream(int device, int stream) {
-        if (streams[device][stream] == nullptr) {
-            ggml_cann_set_device(device);
-            ACL_CHECK(aclrtCreateStream(&streams[device][stream]));
-        }
-        return streams[device][stream];
+    void* alloc_buffer(size_t size, int stream) {
+        void* buffer;
+        ACL_CHECK(aclrtMalloc(&buffer, size, ACL_MEM_MALLOC_HUGE_FIRST));
+        bind_buffer(buffer, stream);
+        return buffer;
     }
 
-    aclrtStream stream() { return stream(device, 0); }
+    void* alloc_buffer(size_t size) {
+        return alloc_buffer(size, 0);
+    }
+
+    void free_buffers() {
+        for (int i = 0; i < GGML_CANN_MAX_STREAMS; i++) {
+            for (void* buffer : buffers[i]) {
+                ACL_CHECK(aclrtFree(buffer));
+            }
+            buffers[i].clear();
+        }
+    }
+
+    aclrtStream stream(int stream) {
+        if (streams[stream] == nullptr) {
+            ggml_cann_set_device(device);
+            ACL_CHECK(aclrtCreateStream(&streams[stream]));
+        }
+        return streams[stream];
+    }
+
+    void bind_buffer(void* buf, int stream) { buffers[stream].push_back(buf); }
+
+    aclrtStream stream() { return stream(0); }
 };
+
+
 
 #endif //CANN_COMMON_H
