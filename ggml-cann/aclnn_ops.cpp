@@ -1,10 +1,10 @@
 #include "aclnn_ops.h"
 
-#include <aclnnop/aclnn_layer_norm.h>
 #include <aclnnop/aclnn_cast.h>
 #include <aclnnop/aclnn_group_norm.h>
-#include <aclnnop/aclnn_softmax.h>
+#include <aclnnop/aclnn_layer_norm.h>
 #include <aclnnop/aclnn_repeat.h>
+#include <aclnnop/aclnn_softmax.h>
 
 #include <cmath>
 #include <cstring>
@@ -25,13 +25,14 @@ void ggml_cann_repeat(ggml_backend_cann_context& ctx, ggml_tensor* dst) {
     int64_t repeatsArray[] = {dst->ne[3] / src->ne[3], dst->ne[2] / src->ne[2],
                               dst->ne[1] / src->ne[1], dst->ne[0] / src->ne[0]};
 
-    aclIntArray *repeats = aclCreateIntArray(repeatsArray, GGML_MAX_DIMS);
+    aclIntArray* repeats = aclCreateIntArray(repeatsArray, GGML_MAX_DIMS);
 
     uint64_t workspaceSize = 0;
     aclOpExecutor* executor;
     void* workspaceAddr = nullptr;
 
-    ACL_CHECK(aclnnRepeatGetWorkspaceSize(acl_src, repeats, acl_dst, &workspaceSize, &executor));
+    ACL_CHECK(aclnnRepeatGetWorkspaceSize(acl_src, repeats, acl_dst,
+                                          &workspaceSize, &executor));
 
     if (workspaceSize > 0) {
         workspaceAddr = ctx.alloc_buffer(workspaceSize);
@@ -42,7 +43,6 @@ void ggml_cann_repeat(ggml_backend_cann_context& ctx, ggml_tensor* dst) {
     ACL_CHECK(aclDestroyIntArray(repeats));
     ACL_CHECK(aclDestroyTensor(acl_src));
     ACL_CHECK(aclDestroyTensor(acl_dst));
-    
 }
 
 void ggml_cann_add(ggml_backend_cann_context& ctx, ggml_tensor* dst) {
@@ -140,7 +140,7 @@ void ggml_cann_concat(ggml_backend_cann_context& ctx, ggml_tensor* dst) {
     ACL_CHECK(aclnnCatGetWorkspaceSize(tensorList, 1, acl_dst, &workspaceSize,
                                        &executor));
     if (workspaceSize > 0) {
-       workspaceAddr = ctx.alloc_buffer(workspaceSize);
+        workspaceAddr = ctx.alloc_buffer(workspaceSize);
     }
 
     aclrtStream main_stream = ctx.stream();
@@ -262,7 +262,8 @@ void ggml_cann_argsort(ggml_backend_cann_context& ctx, ggml_tensor* dst) {
 
     aclTensor* acl_src = create_acl_tensor(src);
     aclTensor* acl_dst = create_acl_tensor(dst);
-    void* buffer = ctx.alloc_buffer(ggml_nbytes(dst) / ggml_type_size(dst->type) * sizeof(int64_t));
+    void* buffer = ctx.alloc_buffer(
+        ggml_nbytes(dst) / ggml_type_size(dst->type) * sizeof(int64_t));
     aclTensor* tmp_tensor =
         create_acl_tensor(buffer, ACL_INT64, ggml_type_size(dst->type), dst->ne,
                           dst->nb, GGML_MAX_DIMS);
@@ -311,8 +312,8 @@ void ggml_cann_norm(ggml_backend_cann_context& ctx, ggml_tensor* dst) {
 
     std::vector<int64_t> normData = {dst->ne[0]};
     aclIntArray* norm = aclCreateIntArray(normData.data(), normData.size());
-    ACL_CHECK(aclnnLayerNormGetWorkspaceSize(acl_src, norm, nullptr, nullptr, eps,
-                                             acl_dst, nullptr, nullptr,
+    ACL_CHECK(aclnnLayerNormGetWorkspaceSize(acl_src, norm, nullptr, nullptr,
+                                             eps, acl_dst, nullptr, nullptr,
                                              &workspaceSize, &executor));
 
     if (workspaceSize > 0) {
@@ -381,24 +382,28 @@ void ggml_cann_softmax(ggml_backend_cann_context& ctx, ggml_tensor* dst) {
     aclTensor* acl_src0 = create_acl_tensor(src0);
     aclTensor* acl_dst = create_acl_tensor(dst);
 
-    float scale    = 1.0f;
+    float scale = 1.0f;
     float max_bias = 0.0f;
 
-    memcpy(&scale,    (float *) dst->op_params + 0, sizeof(float));
-    memcpy(&max_bias, (float *) dst->op_params + 1, sizeof(float));
+    memcpy(&scale, (float*)dst->op_params + 0, sizeof(float));
+    memcpy(&max_bias, (float*)dst->op_params + 1, sizeof(float));
 
     aclScalar* acl_scale = aclCreateScalar(&scale, aclDataType::ACL_FLOAT);
-    aclScalar* acl_max_bias = aclCreateScalar(&max_bias, aclDataType::ACL_FLOAT);
+    aclScalar* acl_max_bias =
+        aclCreateScalar(&max_bias, aclDataType::ACL_FLOAT);
 
     size_t n_bytes = ggml_nbytes(src0);
-    void *buffer = ctx.alloc_buffer(n_bytes);
-    aclTensor* temp_tensor = create_acl_tensor(buffer, ACL_FLOAT, ggml_type_size(src0->type), src0->ne, src0->nb, GGML_MAX_DIMS);
+    void* buffer = ctx.alloc_buffer(n_bytes);
+    aclTensor* temp_tensor =
+        create_acl_tensor(buffer, ACL_FLOAT, ggml_type_size(src0->type),
+                          src0->ne, src0->nb, GGML_MAX_DIMS);
 
     uint64_t workspaceSize = 0;
     aclOpExecutor* executor;
     void* workspaceAddr = nullptr;
 
-    aclnnMulsGetWorkspaceSize(acl_src0, acl_scale, temp_tensor, &workspaceSize, &executor);
+    aclnnMulsGetWorkspaceSize(acl_src0, acl_scale, temp_tensor, &workspaceSize,
+                              &executor);
     if (workspaceSize > 0) {
         workspaceAddr = ctx.alloc_buffer(workspaceSize);
     }
@@ -406,8 +411,8 @@ void ggml_cann_softmax(ggml_backend_cann_context& ctx, ggml_tensor* dst) {
     aclrtStream stream = ctx.stream();
     aclnnMuls(workspaceAddr, workspaceSize, executor, stream);
 
-    ACL_CHECK(aclnnSoftmaxGetWorkspaceSize(
-        temp_tensor, 3, acl_dst, &workspaceSize, &executor));
+    ACL_CHECK(aclnnSoftmaxGetWorkspaceSize(temp_tensor, 3, acl_dst,
+                                           &workspaceSize, &executor));
 
     if (workspaceSize > 0) {
         workspaceAddr = ctx.alloc_buffer(workspaceSize);
@@ -419,6 +424,4 @@ void ggml_cann_softmax(ggml_backend_cann_context& ctx, ggml_tensor* dst) {
     ACL_CHECK(aclDestroyTensor(acl_dst));
 }
 
-void ggml_cann_acc(ggml_backend_cann_context& ctx, ggml_tensor* dst) {
-
-}
+void ggml_cann_acc(ggml_backend_cann_context& ctx, ggml_tensor* dst) {}
