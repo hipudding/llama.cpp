@@ -43,6 +43,8 @@ void ggml_cann_group_norm(ggml_backend_cann_context& ctx, ggml_tensor* dst);
 
 void ggml_cann_softmax(ggml_backend_cann_context& ctx, ggml_tensor* dst);
 
+void ggml_cann_acc(ggml_backend_cann_context& ctx, ggml_tensor* dst);
+
 template <aclnnStatus getWorkspaceSize(const aclTensor*, const aclTensor*,
                                        aclTensor*, uint64_t*, aclOpExecutor**),
           aclnnStatus execute(void*, uint64_t, aclOpExecutor*, aclrtStream)>

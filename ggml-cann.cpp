@@ -347,7 +347,8 @@ static bool ggml_cann_compute_forward(ggml_backend_cann_context& ctx,
             ggml_cann_add(ctx, dst);
             break;
         case GGML_OP_ACC:
-            return false;
+            ggml_cann_acc(ctx, dst);
+            break;
         case GGML_OP_MUL:
             ggml_cann_mul_div<aclnnMulGetWorkspaceSize, aclnnMul>(ctx, dst);
             break;
@@ -686,7 +687,7 @@ GGML_CALL static bool ggml_backend_cann_supports_op(ggml_backend_t backend,
         case GGML_OP_ARGSORT:
             return true;
         case GGML_OP_ACC:
-            return false;
+            return true;
         case GGML_OP_GROUP_NORM:
             return true;
         case GGML_OP_UPSCALE:

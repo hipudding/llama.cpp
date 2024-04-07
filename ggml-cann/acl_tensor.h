@@ -11,7 +11,7 @@ aclDataType type_mapping(ggml_type type);
 aclTensor* create_acl_tensor(const ggml_tensor* tensor,
                              int64_t* bcast_ne = nullptr,
                              size_t* bcast_nb = nullptr, int64_t bcast_dims = 0,
-                             aclFormat format = ACL_FORMAT_ND);
+                             aclFormat format = ACL_FORMAT_ND, size_t offset = 0);
 
 aclTensor* create_acl_tensor(void* data_ptr, aclDataType dtype,
                              size_t type_size, int64_t* ne, size_t* nb,

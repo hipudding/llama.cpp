@@ -34,7 +34,7 @@ aclDataType type_mapping(ggml_type type) {
  */
 aclTensor* create_acl_tensor(const ggml_tensor* tensor, int64_t* bcast_ne,
                              size_t* bcast_nb, int64_t bcast_dims,
-                             aclFormat format) {
+                             aclFormat format, size_t offset) {
     size_t size = ggml_nbytes(tensor);
     void* deviceAddr = nullptr;
 
@@ -55,13 +55,13 @@ aclTensor* create_acl_tensor(const ggml_tensor* tensor, int64_t* bcast_ne,
         for (int i = 0; i < GGML_MAX_DIMS; i++) {
             acl_ne[i] = tensor->ne[i];
             // The step size of acl is in elements.
-            acl_stride[i] = tensor->nb[i] / ggml_type_size(tensor->type);
+            acl_stride[i] = tensor->nb[i] / ggml_element_size(tensor);
         }
     } else {
         // With bcast
         for (int i = 0; i < bcast_dims; i++) {
             acl_ne[i] = bcast_ne[i];
-            acl_stride[i] = bcast_nb[i] / ggml_type_size(tensor->type);
+            acl_stride[i] = bcast_nb[i] / ggml_element_size(tensor);
         }
     }
 
@@ -69,9 +69,9 @@ aclTensor* create_acl_tensor(const ggml_tensor* tensor, int64_t* bcast_ne,
     std::reverse(acl_ne, acl_ne + dims);
     std::reverse(acl_stride, acl_stride + dims);
 
-    aclTensor* acl_tensor =
-        aclCreateTensor(acl_ne, dims, type_mapping(tensor->type), acl_stride, 0,
-                        format, acl_ne, dims, deviceAddr);
+    aclTensor* acl_tensor = aclCreateTensor(
+        acl_ne, dims, type_mapping(tensor->type), acl_stride,
+        offset / ggml_element_size(tensor), format, acl_ne, dims, deviceAddr);
 
     return acl_tensor;
 }
