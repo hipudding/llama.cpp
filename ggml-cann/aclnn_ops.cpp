@@ -5,6 +5,7 @@
 #include <aclnnop/aclnn_layer_norm.h>
 #include <aclnnop/aclnn_repeat.h>
 #include <aclnnop/aclnn_softmax.h>
+#include <aclnnop/aclnn_reduce_sum.h>
 
 #include <cmath>
 #include <cstring>
@@ -474,5 +475,34 @@ void ggml_cann_acc(ggml_backend_cann_context& ctx, ggml_tensor* dst) {
     }
 
     ACL_CHECK(aclDestroyTensor(acl_src1));
+    ACL_CHECK(aclDestroyTensor(acl_dst));
+}
+
+void ggml_cann_sum_rows(ggml_backend_cann_context& ctx, ggml_tensor* dst) {
+    ggml_tensor* src = dst->src[0];
+
+    aclTensor* acl_src = create_acl_tensor(src);
+
+    GGML_ASSERT(dst->ne[0] == 1);
+    aclTensor* acl_dst = create_acl_tensor(dst);
+
+    uint64_t workspaceSize = 0;
+    aclOpExecutor* executor;
+    void* workspaceAddr = nullptr;
+
+    int64_t reduce_dims_host[] = {3};
+    aclIntArray* reduce_dims = aclCreateIntArray(reduce_dims_host, 1);
+
+    ACL_CHECK(aclnnReduceSumGetWorkspaceSize(acl_src, reduce_dims, true,
+                                             type_mapping(src->type), acl_dst,
+                                             &workspaceSize, &executor));
+    if (workspaceSize > 0) {
+        workspaceAddr = ctx.alloc_buffer(workspaceSize);
+    }
+
+    aclrtStream stream = ctx.stream();
+    ACL_CHECK(aclnnReduceSum(workspaceAddr, workspaceSize, executor, stream));
+
+    ACL_CHECK(aclDestroyTensor(acl_src));
     ACL_CHECK(aclDestroyTensor(acl_dst));
 }
