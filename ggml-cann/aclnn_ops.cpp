@@ -424,4 +424,55 @@ void ggml_cann_softmax(ggml_backend_cann_context& ctx, ggml_tensor* dst) {
     ACL_CHECK(aclDestroyTensor(acl_dst));
 }
 
-void ggml_cann_acc(ggml_backend_cann_context& ctx, ggml_tensor* dst) {}
+void ggml_cann_acc(ggml_backend_cann_context& ctx, ggml_tensor* dst) {
+    ggml_tensor* src0 = dst->src[0];
+    ggml_tensor* src1 = dst->src[1];
+
+    size_t nb1 = ((int32_t*)dst->op_params)[0];
+    size_t nb2 = ((int32_t*)dst->op_params)[1];
+    size_t nb3 = ((int32_t*)dst->op_params)[2];
+    size_t offset = ((int32_t*)dst->op_params)[3];
+    bool inplace = (bool)((int32_t*)dst->op_params)[4];
+
+    size_t param_nb[] = {ggml_element_size(src0), nb1, nb2, nb3};
+
+    aclTensor* acl_dst = create_acl_tensor(
+        dst, src1->ne, param_nb, GGML_MAX_DIMS, ACL_FORMAT_ND, offset);
+    aclTensor* acl_src1 = create_acl_tensor(src1);
+
+    aclScalar* alpha = nullptr;
+    float alphaValue = 1.0f;
+    alpha = aclCreateScalar(&alphaValue, aclDataType::ACL_FLOAT);
+
+    uint64_t workspaceSize = 0;
+    aclOpExecutor* executor;
+    void* workspaceAddr = nullptr;
+
+    aclrtStream stream = ctx.stream();
+
+    if (!inplace) {
+        size_t cpy_size = ggml_nbytes(dst);
+        ACL_CHECK(aclrtMemcpyAsync(dst->data, cpy_size, src0->data, cpy_size,
+                                   ACL_MEMCPY_DEVICE_TO_DEVICE, stream));
+        aclTensor* acl_src0 = create_acl_tensor(
+            src0, src1->ne, src0->nb, GGML_MAX_DIMS, ACL_FORMAT_ND, offset);
+        ACL_CHECK(aclnnAddGetWorkspaceSize(acl_src0, acl_src1, alpha, acl_dst,
+                                           &workspaceSize, &executor));
+        if (workspaceSize > 0) {
+            workspaceAddr = ctx.alloc_buffer(workspaceSize);
+        }
+        ACL_CHECK(aclnnAdd(workspaceAddr, workspaceSize, executor, stream));
+        ACL_CHECK(aclDestroyTensor(acl_src0));
+    } else {
+        ACL_CHECK(aclnnInplaceAddGetWorkspaceSize(acl_dst, acl_src1, alpha,
+                                                  &workspaceSize, &executor));
+        if (workspaceSize > 0) {
+            workspaceAddr = ctx.alloc_buffer(workspaceSize);
+        }
+        ACL_CHECK(
+            aclnnInplaceAdd(workspaceAddr, workspaceSize, executor, stream));
+    }
+
+    ACL_CHECK(aclDestroyTensor(acl_src1));
+    ACL_CHECK(aclDestroyTensor(acl_dst));
+}
