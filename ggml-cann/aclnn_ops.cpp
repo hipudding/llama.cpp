@@ -1,9 +1,11 @@
 #include "aclnn_ops.h"
 
+#include <aclnnop/aclnn_avgpool2d.h>
 #include <aclnnop/aclnn_cast.h>
 #include <aclnnop/aclnn_constant_pad_nd.h>
 #include <aclnnop/aclnn_group_norm.h>
 #include <aclnnop/aclnn_layer_norm.h>
+#include <aclnnop/aclnn_max_pool.h>
 #include <aclnnop/aclnn_reduce_sum.h>
 #include <aclnnop/aclnn_repeat.h>
 #include <aclnnop/aclnn_softmax.h>
@@ -13,6 +15,7 @@
 #include <cmath>
 #include <cstring>
 #include <vector>
+#include <float.h>
 
 void ggml_cann_repeat(ggml_backend_cann_context& ctx, ggml_tensor* dst) {
     ggml_tensor* src = dst->src[0];
@@ -544,14 +547,9 @@ void ggml_cann_upsample_nearest2d(ggml_backend_cann_context& ctx,
 }
 
 void aclnn_pad(ggml_backend_cann_context& ctx, ggml_tensor* src,
-               ggml_tensor* dst) {
+               aclTensor* acl_dst, int64_t *paddings, float value = 0.0f) {
+    
     aclTensor* acl_src = create_acl_tensor(src);
-    aclTensor* acl_dst = create_acl_tensor(dst);
-
-    int64_t paddings[] = {
-        0, dst->ne[0] - src->ne[0], 0, dst->ne[1] - src->ne[1],
-        0, dst->ne[2] - src->ne[2], 0, dst->ne[3] - src->ne[3]};
-    float value = 0.0f;
 
     aclIntArray* acl_pad = aclCreateIntArray(paddings, GGML_MAX_DIMS * 2);
     aclScalar* acl_value = aclCreateScalar(&value, aclDataType::ACL_FLOAT);
@@ -560,26 +558,198 @@ void aclnn_pad(ggml_backend_cann_context& ctx, ggml_tensor* src,
     aclOpExecutor* executor;
     void* workspaceAddr = nullptr;
 
-    ACL_CHECK(aclnnConstantPadNdGetWorkspaceSize(
-        acl_src, acl_pad, acl_value, acl_dst, &workspaceSize, &executor));
+    ACL_CHECK(aclnnConstantPadNdGetWorkspaceSize(acl_src, acl_pad, acl_value, 
+                                                 acl_dst, &workspaceSize, 
+                                                 &executor));
 
     if (workspaceSize > 0) {
         workspaceAddr = ctx.alloc_buffer(workspaceSize);
     }
 
     aclrtStream stream = ctx.stream();
-    ACL_CHECK(
-        aclnnConstantPadNd(workspaceAddr, workspaceSize, executor, stream));
+    ACL_CHECK(aclnnConstantPadNd(workspaceAddr, workspaceSize, 
+              executor, stream));
 
     ACL_CHECK(aclDestroyIntArray(acl_pad));
     ACL_CHECK(aclDestroyScalar(acl_value));
     ACL_CHECK(aclDestroyTensor(acl_src));
-    ACL_CHECK(aclDestroyTensor(acl_dst));
 }
 
 void ggml_cann_pad(ggml_backend_cann_context& ctx, ggml_tensor* dst) {
     ggml_tensor* src = dst->src[0];
-    aclnn_pad(ctx, src, dst);
+    aclTensor* acl_dst = create_acl_tensor(dst);
+
+    int64_t paddings[] = {
+        0, dst->ne[0] - src->ne[0], 0, dst->ne[1] - src->ne[1],
+        0, dst->ne[2] - src->ne[2], 0, dst->ne[3] - src->ne[3]};
+    aclnn_pad(ctx, src, acl_dst, paddings);
+    ACL_CHECK(aclDestroyTensor(acl_dst));    
+}
+
+void ggml_cann_pool2d(ggml_backend_cann_context& ctx, ggml_tensor* dst) {
+    const int32_t * opts = (const int32_t *)dst->op_params;
+    enum ggml_op_pool op = static_cast<ggml_op_pool>(opts[0]);
+    switch (op) {
+            case GGML_OP_POOL_AVG:
+                ggml_cann_avg_pool2d(ctx, dst);
+                break;
+            case GGML_OP_POOL_MAX:
+                ggml_cann_max_pool2d(ctx, dst);
+                break;
+            case GGML_OP_POOL_COUNT:
+                GGML_ASSERT(false);
+                break;
+        }
+}
+
+void ggml_cann_avg_pool2d(ggml_backend_cann_context& ctx, ggml_tensor* dst) {
+    ggml_tensor * src = dst->src[0];
+    GGML_ASSERT(src->type == GGML_TYPE_F32);
+    GGML_ASSERT(dst->type == GGML_TYPE_F32);
+
+    aclTensor* acl_src = create_acl_tensor(src, nullptr, nullptr, 0,
+                                           ACL_FORMAT_NCHW);
+    aclTensor* acl_dst = create_acl_tensor(dst, nullptr, nullptr, 0,
+                                           ACL_FORMAT_NCHW);
+    
+    // params
+    const int32_t * opts = (const int32_t *)dst->op_params;
+    enum ggml_op_pool op = static_cast<ggml_op_pool>(opts[0]);
+    const int k0 = opts[1];
+    const int k1 = opts[2];
+    const int s0 = opts[3];
+    const int s1 = opts[4];
+    const int p0 = opts[5];
+    const int p1 = opts[6];
+
+    std::vector<int64_t> kernel_dims = {k1, k0};
+    std::vector<int64_t> stride_dims = {s1, s0};
+    std::vector<int64_t> padding_avg_dims = {p1, p0}; // h, w
+    std::vector<int64_t> padding_max_dims = {p1, p0, 0, 0};
+
+    auto *kernel_size = aclCreateIntArray(kernel_dims.data(), 2);
+    auto *strides = aclCreateIntArray(stride_dims.data(), 2);
+    auto *paddings_avg = aclCreateIntArray(padding_avg_dims.data(), 2);
+
+    bool ceil_mode = false; //
+    bool count_include_pad = true;
+    int64_t divisor_override = 0;
+    int8_t cube_math_type = 0;
+
+    // execute op api
+    uint64_t workspaceSize = 0;
+    aclOpExecutor* executor;
+    void* workspaceAddr = nullptr;
+
+    aclrtStream stream = ctx.stream();
+    ACL_CHECK(aclnnAvgPool2dGetWorkspaceSize(acl_src,
+                                             kernel_size,
+                                             strides,
+                                             paddings_avg,
+                                             ceil_mode,
+                                             count_include_pad,
+                                             divisor_override,
+                                             cube_math_type,
+                                             acl_dst,
+                                             &workspaceSize,
+                                             &executor));
+
+    if (workspaceSize > 0) {
+        workspaceAddr = ctx.alloc_buffer(workspaceSize);
+    }
+    ACL_CHECK(aclnnAvgPool2d(workspaceAddr, workspaceSize, executor, stream));
+
+    // release
+    ACL_CHECK(aclDestroyTensor(acl_src));
+    ACL_CHECK(aclDestroyTensor(acl_dst));
+    ACL_CHECK(aclDestroyIntArray(kernel_size));
+    ACL_CHECK(aclDestroyIntArray(strides));
+    ACL_CHECK(aclDestroyIntArray(paddings_avg));
+}
+
+void ggml_cann_max_pool2d(ggml_backend_cann_context& ctx, ggml_tensor* dst) {
+    ggml_tensor * src = dst->src[0];
+    GGML_ASSERT(src->type == GGML_TYPE_F32);
+    GGML_ASSERT(dst->type == GGML_TYPE_F32);
+
+    // params
+    const int32_t * opts = (const int32_t *)dst->op_params;
+    const int k0 = opts[1];
+    const int k1 = opts[2];
+    const int s0 = opts[3];
+    const int s1 = opts[4];
+    const int p0 = opts[5];
+    const int p1 = opts[6];
+
+    int64_t temp_ne[] = {src->ne[0] + p0 * 2, src->ne[1] + p1 * 2, 
+                         src->ne[2], src->ne[3]};
+    size_t temp_nb[GGML_MAX_DIMS];
+    
+    temp_nb[0] = ggml_type_size(src->type);
+    temp_nb[1] = temp_nb[0] * (temp_ne[0] / ggml_blck_size(src->type));
+    for (int i = 2; i < GGML_MAX_DIMS; i++) {
+        temp_nb[i] = temp_nb[i-1] * temp_ne[i-1];
+    }
+    
+    void* buffer = ctx.alloc_buffer(ggml_nbytes(src) / ggml_type_size(src->type)
+                                    * sizeof(float_t));
+    aclTensor* tmp_tensor = create_acl_tensor(buffer, ACL_FLOAT, 
+                                              ggml_type_size(src->type), 
+                                              temp_ne, temp_nb, GGML_MAX_DIMS, 
+                                              ACL_FORMAT_NCHW);
+
+    // pad
+    int64_t paddings[] = {p0, p0, p1, p1, 0, 0, 0, 0};
+    float value = -FLT_MAX;
+    aclnn_pad(ctx, src, tmp_tensor, paddings, value);
+
+    // max_pool
+    std::vector<int64_t> kernel_dims = {k1, k0};
+    std::vector<int64_t> stride_dims = {s1, s0};
+    std::vector<int64_t> padding_max_dims = {0, 0, 0, 0};
+    std::vector<int64_t> dilation_size = {1, 1};
+    auto *kernel_size = aclCreateIntArray(kernel_dims.data(), 2);
+    auto *strides = aclCreateIntArray(stride_dims.data(), 2);
+    auto *paddings_max = aclCreateIntArray(padding_max_dims.data(), 4);
+    auto *dilations = aclCreateIntArray(dilation_size.data(), 2);
+
+    bool ceil_mode = false;
+    int64_t auto_pads = 0;
+
+    aclTensor* acl_src = create_acl_tensor(src, nullptr, nullptr, 0,
+                                           ACL_FORMAT_NCHW);
+    aclTensor* acl_dst = create_acl_tensor(dst, nullptr, nullptr, 0,
+                                           ACL_FORMAT_NCHW);
+
+    uint64_t workspaceSize = 0;
+    aclOpExecutor* executor;
+    void* workspaceAddr = nullptr;
+    aclrtStream stream = ctx.stream();
+
+    ACL_CHECK(aclnnMaxPoolGetWorkspaceSize(tmp_tensor,
+                                            kernel_size,
+                                            strides,
+                                            auto_pads,
+                                            paddings_max,
+                                            dilations,
+                                            ceil_mode,
+                                            acl_dst,
+                                            &workspaceSize,
+                                            &executor));
+    if (workspaceSize > 0) {
+        workspaceAddr = ctx.alloc_buffer(workspaceSize);
+    }
+
+    ACL_CHECK(aclnnMaxPool(workspaceAddr, workspaceSize, executor, stream));
+
+    // release
+    ACL_CHECK(aclDestroyTensor(acl_src));
+    ACL_CHECK(aclDestroyTensor(acl_dst));
+    ACL_CHECK(aclDestroyTensor(tmp_tensor));
+    ACL_CHECK(aclDestroyIntArray(kernel_size));
+    ACL_CHECK(aclDestroyIntArray(strides));
+    ACL_CHECK(aclDestroyIntArray(paddings_max));
+    ACL_CHECK(aclDestroyIntArray(dilations));
 }
 
 void ggml_cann_dup(ggml_backend_cann_context& ctx, ggml_tensor* dst) {

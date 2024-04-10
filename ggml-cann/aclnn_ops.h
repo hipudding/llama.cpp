@@ -153,6 +153,11 @@ void ggml_cann_activation(ggml_backend_cann_context& ctx, ggml_tensor* dst) {
     ACL_CHECK(aclDestroyTensor(acl_dst));
 }
 
-void ggml_cann_upsample_nearest2d(ggml_backend_cann_context& ctx, ggml_tensor* dst);
+void ggml_cann_upsample_nearest2d(ggml_backend_cann_context& ctx, 
+                                  ggml_tensor* dst);
+
+void ggml_cann_pool2d(ggml_backend_cann_context& ctx, ggml_tensor* dst);
+void ggml_cann_avg_pool2d(ggml_backend_cann_context& ctx, ggml_tensor* dst);
+void ggml_cann_max_pool2d(ggml_backend_cann_context& ctx, ggml_tensor* dst);
 
 #endif  // CANN_ACLNN_OPS
