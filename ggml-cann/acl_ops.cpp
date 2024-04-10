@@ -112,17 +112,3 @@ void ggml_cann_cont(ggml_backend_cann_context& ctx, ggml_tensor* dst) {
         .output(dst, "dst")
         .run(ctx.stream());
 }
-
-void ggml_cann_pad(ggml_backend_cann_context& ctx, ggml_tensor* dst) {
-    ggml_tensor* src = dst->src[0];
-    int64_t paddings[] = {
-        0, dst->ne[3] - src->ne[3], 0, dst->ne[2] - src->ne[2],
-        0, dst->ne[1] - src->ne[1], 0, dst->ne[0] - src->ne[0]};
-    int64_t dim[] = {GGML_MAX_DIMS, 2};
-    OpCaller op;
-    op.name("Pad")
-        .input(src, "x")
-        .input(ctx, paddings, ACL_INT64, 2, dim, "paddings", ctx.stream())
-        .output(dst, "y")
-        .run(ctx.stream());
-}

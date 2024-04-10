@@ -71,8 +71,4 @@ struct OpCaller {
 
 void ggml_cann_cont(ggml_backend_cann_context& ctx, ggml_tensor* dst);
 
-void ggml_cann_pad(ggml_backend_cann_context& ctx, ggml_tensor* dst);
-
-void ggml_cann_upscale(ggml_backend_cann_context& ctx, ggml_tensor* dst);
-
 #endif  // CANN_ACL_OPS

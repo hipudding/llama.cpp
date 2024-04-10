@@ -1,12 +1,13 @@
 #include "aclnn_ops.h"
 
 #include <aclnnop/aclnn_cast.h>
+#include <aclnnop/aclnn_constant_pad_nd.h>
 #include <aclnnop/aclnn_group_norm.h>
 #include <aclnnop/aclnn_layer_norm.h>
+#include <aclnnop/aclnn_reduce_sum.h>
 #include <aclnnop/aclnn_repeat.h>
 #include <aclnnop/aclnn_softmax.h>
 #include <aclnnop/aclnn_upsample_nearest_2d.h>
-#include <aclnnop/aclnn_reduce_sum.h>
 
 #include <cmath>
 #include <cstring>
@@ -490,6 +491,10 @@ void ggml_cann_sum_rows(ggml_backend_cann_context& ctx, ggml_tensor* dst) {
     int64_t reduce_dims_host[] = {3};
     aclIntArray* reduce_dims = aclCreateIntArray(reduce_dims_host, 1);
 
+    uint64_t workspaceSize = 0;
+    aclOpExecutor* executor;
+    void* workspaceAddr = nullptr;
+
     ACL_CHECK(aclnnReduceSumGetWorkspaceSize(acl_src, reduce_dims, true,
                                              type_mapping(src->type), acl_dst,
                                              &workspaceSize, &executor));
@@ -504,37 +509,74 @@ void ggml_cann_sum_rows(ggml_backend_cann_context& ctx, ggml_tensor* dst) {
     ACL_CHECK(aclDestroyTensor(acl_dst));
 }
 
-void ggml_cann_upsample_nearest2d(ggml_backend_cann_context& ctx, 
-    ggml_tensor* dst) {
-
+void ggml_cann_upsample_nearest2d(ggml_backend_cann_context& ctx,
+                                  ggml_tensor* dst) {
     ggml_tensor* src = dst->src[0];
 
-    aclTensor* acl_src = create_acl_tensor(src, nullptr, nullptr, 0, 
-                                           ACL_FORMAT_NCHW);
-    aclTensor* acl_dst = create_acl_tensor(dst, nullptr, nullptr, 0, 
-                                           ACL_FORMAT_NCHW);
+    aclTensor* acl_src =
+        create_acl_tensor(src, nullptr, nullptr, 0, ACL_FORMAT_NCHW);
+    aclTensor* acl_dst =
+        create_acl_tensor(dst, nullptr, nullptr, 0, ACL_FORMAT_NCHW);
 
     const int scale_factor = dst->op_params[0];
     std::vector<int64_t> output_size{dst->ne[1], dst->ne[0]};
     auto output_size_array = aclCreateIntArray(output_size.data(), 2);
-    
+
     uint64_t workspaceSize = 0;
     aclOpExecutor* executor;
     void* workspaceAddr = nullptr;
 
     aclrtStream stream = ctx.stream();
 
-    ACL_CHECK(aclnnUpsampleNearest2dGetWorkspaceSize(acl_src, output_size_array, 
-                                                     acl_dst, &workspaceSize, 
-                                                     &executor));
+    ACL_CHECK(aclnnUpsampleNearest2dGetWorkspaceSize(
+        acl_src, output_size_array, acl_dst, &workspaceSize, &executor));
     if (workspaceSize > 0) {
         workspaceAddr = ctx.alloc_buffer(workspaceSize);
     }
-    
-    ACL_CHECK(aclnnUpsampleNearest2d(workspaceAddr, workspaceSize, executor, 
-                                     stream));
-    
+
+    ACL_CHECK(
+        aclnnUpsampleNearest2d(workspaceAddr, workspaceSize, executor, stream));
+
     ACL_CHECK(aclDestroyIntArray(output_size_array));
     ACL_CHECK(aclDestroyTensor(acl_src));
     ACL_CHECK(aclDestroyTensor(acl_dst));
+}
+
+void aclnn_pad(ggml_backend_cann_context& ctx, ggml_tensor* src,
+               ggml_tensor* dst) {
+    aclTensor* acl_src = create_acl_tensor(src);
+    aclTensor* acl_dst = create_acl_tensor(dst);
+
+    int64_t paddings[] = {
+        0, dst->ne[0] - src->ne[0], 0, dst->ne[1] - src->ne[1],
+        0, dst->ne[2] - src->ne[2], 0, dst->ne[3] - src->ne[3]};
+    float value = 0.0f;
+
+    aclIntArray* acl_pad = aclCreateIntArray(paddings, GGML_MAX_DIMS * 2);
+    aclScalar* acl_value = aclCreateScalar(&value, aclDataType::ACL_FLOAT);
+
+    uint64_t workspaceSize = 0;
+    aclOpExecutor* executor;
+    void* workspaceAddr = nullptr;
+
+    ACL_CHECK(aclnnConstantPadNdGetWorkspaceSize(
+        acl_src, acl_pad, acl_value, acl_dst, &workspaceSize, &executor));
+
+    if (workspaceSize > 0) {
+        workspaceAddr = ctx.alloc_buffer(workspaceSize);
+    }
+
+    aclrtStream stream = ctx.stream();
+    ACL_CHECK(
+        aclnnConstantPadNd(workspaceAddr, workspaceSize, executor, stream));
+
+    ACL_CHECK(aclDestroyIntArray(acl_pad));
+    ACL_CHECK(aclDestroyScalar(acl_value));
+    ACL_CHECK(aclDestroyTensor(acl_src));
+    ACL_CHECK(aclDestroyTensor(acl_dst));
+}
+
+void ggml_cann_pad(ggml_backend_cann_context& ctx, ggml_tensor* dst) {
+    ggml_tensor* src = dst->src[0];
+    aclnn_pad(ctx, src, dst);
 }

@@ -398,7 +398,6 @@ static bool ggml_cann_compute_forward(ggml_backend_cann_context& ctx,
         case GGML_OP_CONCAT:
             ggml_cann_concat(ctx, dst);
             break;
-        // TODO: Format need NC1HWC0.
         case GGML_OP_UPSCALE:
             ggml_cann_upsample_nearest2d(ctx, dst);
             break;
