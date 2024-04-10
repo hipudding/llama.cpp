@@ -49,6 +49,8 @@ void ggml_cann_sum_rows(ggml_backend_cann_context& ctx, ggml_tensor* dst);
 
 void ggml_cann_pad(ggml_backend_cann_context& ctx, ggml_tensor* dst);
 
+void ggml_cann_dup(ggml_backend_cann_context& ctx, ggml_tensor* dst);
+
 template <aclnnStatus getWorkspaceSize(const aclTensor*, const aclTensor*,
                                        aclTensor*, uint64_t*, aclOpExecutor**),
           aclnnStatus execute(void*, uint64_t, aclOpExecutor*, aclrtStream)>

@@ -8,6 +8,7 @@
 #include <aclnnop/aclnn_repeat.h>
 #include <aclnnop/aclnn_softmax.h>
 #include <aclnnop/aclnn_upsample_nearest_2d.h>
+#include <aclnnop/aclnn_copy.h>
 
 #include <cmath>
 #include <cstring>
@@ -579,4 +580,29 @@ void aclnn_pad(ggml_backend_cann_context& ctx, ggml_tensor* src,
 void ggml_cann_pad(ggml_backend_cann_context& ctx, ggml_tensor* dst) {
     ggml_tensor* src = dst->src[0];
     aclnn_pad(ctx, src, dst);
+}
+
+void ggml_cann_dup(ggml_backend_cann_context& ctx, ggml_tensor* dst) {
+    ggml_tensor* src = dst->src[0];
+
+    aclTensor* acl_src = create_acl_tensor(src);
+    aclTensor* acl_dst = create_acl_tensor(dst);
+
+    uint64_t workspaceSize = 0;
+    aclOpExecutor* executor;
+    void* workspaceAddr = nullptr;
+
+    ACL_CHECK(aclnnInplaceCopyGetWorkspaceSize(
+        acl_dst, acl_src, &workspaceSize, &executor));
+
+    if (workspaceSize > 0) {
+        workspaceAddr = ctx.alloc_buffer(workspaceSize);
+    }
+
+    aclrtStream stream = ctx.stream();
+    ACL_CHECK(
+        aclnnInplaceCopy(workspaceAddr, workspaceSize, executor, stream));
+
+    ACL_CHECK(aclDestroyTensor(acl_src));
+    ACL_CHECK(aclDestroyTensor(acl_dst));
 }

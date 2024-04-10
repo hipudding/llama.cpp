@@ -69,6 +69,4 @@ struct OpCaller {
     OpCaller& run(aclrtStream stream = nullptr);
 };
 
-void ggml_cann_cont(ggml_backend_cann_context& ctx, ggml_tensor* dst);
-
 #endif  // CANN_ACL_OPS

@@ -78,37 +78,3 @@ OpCaller& OpCaller::run(aclrtStream stream) {
         stream));
     return *this;
 }
-
-void ggml_cann_cont(ggml_backend_cann_context& ctx, ggml_tensor* dst) {
-    ggml_tensor* src = dst->src[0];
-    int64_t src_stride[GGML_MAX_DIMS];
-    int64_t dst_stride[GGML_MAX_DIMS];
-
-    for (int i = 0; i < GGML_MAX_DIMS; i++) {
-        src_stride[i] = src->nb[i] / ggml_type_size(src->type);
-        dst_stride[i] = dst->nb[i] / ggml_type_size(src->type);
-    }
-
-    int64_t storage_offset[] = {0};
-    int64_t storage_offset_dim[] = {1};
-    int64_t size_stride_dim[] = {GGML_MAX_DIMS};
-
-    OpCaller op;
-    op.name("ViewCopy")
-        .input_no_contiguous(dst, "dst")
-        .input(ctx, dst->ne, ACL_INT64, 1, size_stride_dim, "dst_size",
-               ctx.stream())
-        .input(ctx, dst_stride, ACL_INT64, 1, size_stride_dim, "dst_stride",
-               ctx.stream())
-        .input(ctx, storage_offset, ACL_INT64, 1, storage_offset_dim,
-               "dst_storage_offset", ctx.stream())
-        .input_no_contiguous(src, "src")
-        .input(ctx, src->ne, ACL_INT64, 1, size_stride_dim, "src_size",
-               ctx.stream())
-        .input(ctx, src_stride, ACL_INT64, 1, size_stride_dim, "src_stride",
-               ctx.stream())
-        .input(ctx, storage_offset, ACL_INT64, 1, storage_offset_dim,
-               "src_storage_offset", ctx.stream())
-        .output(dst, "dst")
-        .run(ctx.stream());
-}

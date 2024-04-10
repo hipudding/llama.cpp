@@ -341,7 +341,7 @@ static bool ggml_cann_compute_forward(ggml_backend_cann_context& ctx,
         case GGML_OP_GET_ROWS:
             return false;
         case GGML_OP_DUP:
-            ggml_cann_cont(ctx, dst);
+            ggml_cann_dup(ctx, dst);
             break;
         case GGML_OP_ADD:
             ggml_cann_add(ctx, dst);
@@ -428,7 +428,7 @@ static bool ggml_cann_compute_forward(ggml_backend_cann_context& ctx,
         case GGML_OP_CPY:
             return false;
         case GGML_OP_CONT:
-            ggml_cann_cont(ctx, dst);
+            ggml_cann_dup(ctx, dst);
             break;
         case GGML_OP_NONE:
         case GGML_OP_RESHAPE:
