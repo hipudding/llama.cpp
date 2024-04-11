@@ -682,7 +682,8 @@ void ggml_cann_max_pool2d(ggml_backend_cann_context& ctx, ggml_tensor* dst) {
         temp_nb[i] = temp_nb[i - 1] * temp_ne[i - 1];
     }
 
-    void* buffer = ctx.alloc_buffer(ggml_nelements(src) * sizeof(float));
+    void* buffer =
+        ctx.alloc_buffer(ggml_nbytes(src) + p0 * 2 + p1 * 2 * src->nb[1]);
     aclTensor* tmp_tensor =
         create_acl_tensor(buffer, ACL_FLOAT, ggml_element_size(src), temp_ne,
                           temp_nb, GGML_MAX_DIMS, ACL_FORMAT_NCHW);
@@ -751,4 +752,101 @@ void ggml_cann_dup(ggml_backend_cann_context& ctx, ggml_tensor* dst) {
 
     ACL_CHECK(aclDestroyTensor(acl_src));
     ACL_CHECK(aclDestroyTensor(acl_dst));
+}
+
+#ifdef __cplusplus
+extern "C" {
+#endif
+aclnnStatus aclnnRmsNormGetWorkspaceSize(const aclTensor* x,
+                                         const aclTensor* gamma, double epsilon,
+                                         const aclTensor* yOut,
+                                         const aclTensor* rstdOout,
+                                         uint64_t* workspaceSize,
+                                         aclOpExecutor** executor);
+aclnnStatus aclnnRmsNorm(void* workspace, uint64_t workspaceSize,
+                         aclOpExecutor* executor, aclrtStream stream);
+#ifdef __cplusplus
+}
+#endif
+
+aclTensor* aclnn_zero(ggml_backend_cann_context& ctx, int64_t* ne, int64_t dims,
+                      aclDataType type, size_t type_size) {
+    int64_t elements = 1;
+    for (int i = 0; i < dims; i++) {
+        elements *= ne[i];
+    }
+    size_t n_bytes = elements * type_size;
+
+    size_t nb[GGML_MAX_DIMS];
+    nb[0] = type_size;
+    for (int i = 1; i < dims; i++) {
+        nb[i] = nb[i - 1] * ne[i - 1];
+    }
+
+    void* buffer = ctx.alloc_buffer(n_bytes);
+    ACL_CHECK(aclrtMemsetAsync(buffer, n_bytes, 0, n_bytes, ctx.stream()));
+    aclTensor* zero = create_acl_tensor(buffer, type, type_size, ne, nb, dims);
+    return zero;
+}
+
+aclTensor* aclnn_ones(ggml_backend_cann_context& ctx, int64_t* ne, int64_t dims,
+                      aclDataType type, size_t type_size) {
+    aclTensor* acl_tensor = aclnn_zero(ctx, ne, dims, type, type_size);
+    float value = 1.0f;
+    aclScalar* alpha = aclCreateScalar(&value, aclDataType::ACL_FLOAT);
+    aclScalar* other = aclCreateScalar(&value, aclDataType::ACL_FLOAT);
+
+    uint64_t workspaceSize = 0;
+    aclOpExecutor* executor;
+    void* workspaceAddr = nullptr;
+
+    ACL_CHECK(aclnnInplaceAddsGetWorkspaceSize(acl_tensor, other, alpha,
+                                               &workspaceSize, &executor));
+
+    if (workspaceSize > 0) {
+        workspaceAddr = ctx.alloc_buffer(workspaceSize);
+    }
+    ACL_CHECK(
+        aclnnInplaceAdds(workspaceAddr, workspaceSize, executor, ctx.stream()));
+
+    return acl_tensor;
+}
+
+void ggml_cann_rms_norm(ggml_backend_cann_context& ctx, ggml_tensor* dst) {
+    ggml_tensor* src = dst->src[0];
+
+    aclTensor* acl_src = create_acl_tensor(src);
+    aclTensor* acl_dst = create_acl_tensor(dst);
+
+    float eps;
+    memcpy(&eps, dst->op_params, sizeof(float));
+
+    GGML_ASSERT(eps > 0.0f);
+
+    uint64_t workspaceSize = 0;
+    aclOpExecutor* executor;
+    void* workspaceAddr = nullptr;
+
+    aclTensor* acl_gamma = aclnn_ones(ctx, src->ne, 1, type_mapping(src->type),
+                                      ggml_element_size(src));
+
+    int64_t rstd_ne[] = {1, src->ne[1], src->ne[2], src->ne[3]};
+    aclTensor* acl_rstd =
+        aclnn_zero(ctx, rstd_ne, GGML_MAX_DIMS, type_mapping(src->type),
+                   ggml_element_size(src));
+
+    ACL_CHECK(aclnnRmsNormGetWorkspaceSize(
+        acl_src, acl_gamma, eps, acl_dst, acl_rstd, &workspaceSize, &executor));
+
+    if (workspaceSize > 0) {
+        workspaceAddr = ctx.alloc_buffer(workspaceSize);
+    }
+
+    ACL_CHECK(
+        aclnnRmsNorm(workspaceAddr, workspaceSize, executor, ctx.stream()));
+
+    ACL_CHECK(aclDestroyTensor(acl_src));
+    ACL_CHECK(aclDestroyTensor(acl_dst));
+    ACL_CHECK(aclDestroyTensor(acl_gamma));
+    ACL_CHECK(aclDestroyTensor(acl_rstd));
 }
