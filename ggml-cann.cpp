@@ -365,6 +365,7 @@ static bool ggml_cann_compute_forward(ggml_backend_cann_context& ctx,
                     ggml_cann_activation<aclnnSiluGetWorkspaceSize, aclnnSilu>(
                         ctx, dst);
                     break;
+                // TODO: Use faster gelu??
                 case GGML_UNARY_OP_GELU_QUICK:
                     ggml_cann_activation<aclnnGeluGetWorkspaceSize, aclnnGelu>(
                         ctx, dst);
