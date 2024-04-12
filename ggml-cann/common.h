@@ -5,6 +5,7 @@
 
 #include <cstdio>
 #include <iostream>
+#include <map>
 #include <string>
 #include <vector>
 
@@ -54,9 +55,10 @@ struct ggml_backend_cann_context {
     aclrtEvent copy_event = nullptr;
 
     aclrtStream streams[GGML_CANN_MAX_STREAMS] = {{nullptr}};
+    int stream_ids[GGML_CANN_MAX_STREAMS] = {0};
 
     // bind temp buffers to stream. Free after sync.
-    std::vector<void*> buffers[GGML_CANN_MAX_STREAMS];
+    std::multimap<ggml_tensor*, void*> buffers[GGML_CANN_MAX_STREAMS];
 
     explicit ggml_backend_cann_context(int device)
         : device(device), name(GGML_CANN_NAME + std::to_string(device)) {}
@@ -74,33 +76,66 @@ struct ggml_backend_cann_context {
         }
     }
 
-    void* alloc_buffer(size_t size, int stream) {
+    void* alloc_buffer(ggml_tensor* dst, size_t size, int stream) {
         void* buffer;
         ACL_CHECK(aclrtMalloc(&buffer, size, ACL_MEM_MALLOC_HUGE_FIRST));
-        bind_buffer(buffer, stream);
+        bind_buffer(dst, buffer, stream);
         return buffer;
     }
 
-    void* alloc_buffer(size_t size) { return alloc_buffer(size, 0); }
+    void* alloc_buffer(ggml_tensor* dst, size_t size) {
+        return alloc_buffer(dst, size, 0);
+    }
 
-    void free_buffers() {
+    // Free all buffers bind to all streams.
+    void free_device_buffers() {
         for (int i = 0; i < GGML_CANN_MAX_STREAMS; i++) {
-            for (void* buffer : buffers[i]) {
-                ACL_CHECK(aclrtFree(buffer));
+            for (auto& it : buffers[i]) {
+                ACL_CHECK(aclrtFree(it.second));
             }
             buffers[i].clear();
+        }
+    }
+
+    // Free all buffers bind to stream.
+    void free_stream_buffers(int stream) {
+        for (auto& it : buffers[stream]) {
+            ACL_CHECK(aclrtFree(it.second));
+        }
+        buffers[stream].clear();
+    }
+
+    // Free all buffers belong to dst.
+    // Remove it from stream buffers to avoid double free.
+    void free_tensor_buffers(ggml_tensor* dst) {
+        // ggml_tensor.extra means which stream are tensor in.
+        if (dst->extra != nullptr) {
+            int stream = *((int*)dst->extra);
+            for (auto pos = buffers[stream].equal_range(dst); pos.first != pos.second;
+                 ++pos.first) {
+                ACL_CHECK(aclrtFree(pos.first->second));
+            }
+            buffers[stream].erase(dst);
         }
     }
 
     aclrtStream stream(int stream) {
         if (streams[stream] == nullptr) {
             ggml_cann_set_device(device);
+            stream_ids[stream] = stream;
             ACL_CHECK(aclrtCreateStream(&streams[stream]));
         }
         return streams[stream];
     }
 
-    void bind_buffer(void* buf, int stream) { buffers[stream].push_back(buf); }
+    // All temp buffers should bind to stream and the dst tensor.
+    // It will be free if:
+    // 1. dst tensor are no longer used any more.
+    // 2. after stream sync.
+    void bind_buffer(ggml_tensor* dst, void* buf, int stream) {
+        buffers[stream].insert(std::make_pair(dst, buf));
+        dst->extra = &(stream_ids[stream]);
+    }
 
     aclrtStream stream() { return stream(0); }
 };

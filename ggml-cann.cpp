@@ -476,7 +476,7 @@ GGML_CALL static void ggml_backend_cann_free(ggml_backend_t backend) {
     ggml_backend_cann_context* cann_ctx =
         (ggml_backend_cann_context*)backend->context;
     ACL_CHECK(aclrtSynchronizeDevice());
-    cann_ctx->free_buffers();
+    cann_ctx->free_device_buffers();
     ACL_CHECK(aclrtResetDevice(cann_ctx->device));
     delete cann_ctx;
     delete backend;
@@ -604,8 +604,8 @@ GGML_CALL static void ggml_backend_cann_synchronize(ggml_backend_t backend) {
 
     ACL_CHECK(aclrtSynchronizeStream(cann_ctx->stream()));
 
-    // Free temp buffers binding to each stream.
-    cann_ctx->free_buffers();
+    // Free temp buffers binding to stream.
+    cann_ctx->free_stream_buffers(0);
 }
 
 GGML_CALL static enum ggml_status ggml_backend_cann_graph_compute(
@@ -624,6 +624,8 @@ GGML_CALL static enum ggml_status ggml_backend_cann_graph_compute(
             continue;
         }
 
+        // if tensor is reused, free temp buffers first.
+        cann_ctx->free_tensor_buffers(node);
         bool ok = ggml_cann_compute_forward(*cann_ctx, node);
         if (!ok) {
             fprintf(stderr, "%s: error: op not supported %s (%s)\n", __func__,
@@ -653,6 +655,7 @@ GGML_CALL static bool ggml_backend_cann_supports_op(ggml_backend_t backend,
             }
         case GGML_OP_MUL_MAT:
         case GGML_OP_MUL_MAT_ID:
+        // embedding
         case GGML_OP_GET_ROWS:
         case GGML_OP_CPY:
             return false;
@@ -675,21 +678,17 @@ GGML_CALL static bool ggml_backend_cann_supports_op(ggml_backend_t backend,
         case GGML_OP_CONT:
             return true;
         case GGML_OP_DIAG_MASK_INF:
-            return false;
         case GGML_OP_SOFT_MAX:
-            return true;
         case GGML_OP_ROPE:
         case GGML_OP_ALIBI:
         case GGML_OP_IM2COL:
+            return false;
         case GGML_OP_POOL_2D:
-            return true;
         case GGML_OP_SUM_ROWS:
         case GGML_OP_ARGSORT:
         case GGML_OP_ACC:
         case GGML_OP_GROUP_NORM:
-            return true;
         case GGML_OP_UPSCALE:
-            return true;
         case GGML_OP_PAD:
         case GGML_OP_ARANGE:
             return true;

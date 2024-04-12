@@ -15,7 +15,6 @@
 #include <aclnnop/aclnn_relu.h>
 #include <aclnnop/aclnn_silu.h>
 #include <aclnnop/aclnn_tanh.h>
-
 #include "acl_tensor.h"
 #include "common.h"
 
@@ -83,7 +82,7 @@ void ggml_cann_mul_div(ggml_backend_cann_context& ctx, ggml_tensor* dst) {
     ACL_CHECK(getWorkspaceSize(acl_src0, acl_src1, acl_dst, &workspaceSize,
                                &executor));
     if (workspaceSize > 0) {
-        workspaceAddr = ctx.alloc_buffer(workspaceSize);
+        workspaceAddr = ctx.alloc_buffer(dst, workspaceSize);
     }
 
     aclrtStream main_stream = ctx.stream();
@@ -114,7 +113,7 @@ void ggml_cann_activation(ggml_backend_cann_context& ctx, ggml_tensor* dst) {
 
     ACL_CHECK(getWorkspaceSize(acl_src, acl_dst, &workspaceSize, &executor));
     if (workspaceSize > 0) {
-        workspaceAddr = ctx.alloc_buffer(workspaceSize);
+        workspaceAddr = ctx.alloc_buffer(dst, workspaceSize);
     }
 
     aclrtStream main_stream = ctx.stream();
@@ -144,7 +143,7 @@ void ggml_cann_activation(ggml_backend_cann_context& ctx, ggml_tensor* dst) {
 
     ACL_CHECK(getWorkspaceSize(acl_src, acl_dst, &workspaceSize, &executor));
     if (workspaceSize > 0) {
-        workspaceAddr = ctx.alloc_buffer(workspaceSize);
+        workspaceAddr = ctx.alloc_buffer(dst, workspaceSize);
     }
 
     aclrtStream main_stream = ctx.stream();

@@ -38,7 +38,7 @@ struct OpCaller {
     OpCaller& attr(float value, const char* name);
 
     template <typename T>
-    OpCaller& input(ggml_backend_cann_context& ctx, T* values,
+    OpCaller& input(ggml_backend_cann_context& ctx, ggml_tensor *dst, T* values,
                     aclDataType dtype, size_t dims, int64_t* dim,
                     const char* name, aclrtStream stream = nullptr) {
         size_t n_elem = 1;
@@ -47,7 +47,7 @@ struct OpCaller {
         }
 
         size_t n_bytes = n_elem * sizeof(T);
-        void* device_ptr = ctx.alloc_buffer(n_bytes);
+        void* device_ptr = ctx.alloc_buffer(dst, n_bytes);
         if (stream == nullptr) {
             ACL_CHECK(aclrtMemcpy(device_ptr, n_bytes, values, n_bytes,
                                   ACL_MEMCPY_HOST_TO_DEVICE));
