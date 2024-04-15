@@ -4,6 +4,7 @@
 
 #include <cstdio>
 #include <mutex>
+#include <cmath>
 
 #include "ggml-backend-impl.h"
 #include "ggml-cann/acl_ops.h"
@@ -441,7 +442,8 @@ static bool ggml_cann_compute_forward(ggml_backend_cann_context& ctx,
             // Do nothing with these ops.
             break;
         case GGML_OP_DIAG_MASK_INF:
-            return false;
+            ggml_cann_diag_mask(ctx, dst, -INFINITY);
+            break;
         case GGML_OP_SOFT_MAX:
             ggml_cann_softmax(ctx, dst);
             break;
@@ -676,8 +678,8 @@ GGML_CALL static bool ggml_backend_cann_supports_op(ggml_backend_t backend,
         case GGML_OP_SQR:
         case GGML_OP_CLAMP:
         case GGML_OP_CONT:
-            return true;
         case GGML_OP_DIAG_MASK_INF:
+            return true;
         case GGML_OP_SOFT_MAX:
         case GGML_OP_ROPE:
         case GGML_OP_ALIBI:

@@ -11,6 +11,8 @@
 #include <aclnnop/aclnn_repeat.h>
 #include <aclnnop/aclnn_softmax.h>
 #include <aclnnop/aclnn_upsample_nearest_2d.h>
+#include <aclnnop/aclnn_tril.h>
+#include <aclnnop/aclnn_triu.h>
 #include <float.h>
 
 #include <cmath>
@@ -790,10 +792,10 @@ aclTensor* aclnn_zero(ggml_backend_cann_context& ctx, ggml_tensor* dst, int64_t*
 }
 
 aclTensor* aclnn_ones(ggml_backend_cann_context& ctx, ggml_tensor* dst, int64_t* ne, int64_t dims,
-                      aclDataType type, size_t type_size) {
+                      aclDataType type, size_t type_size, float value = 1.0f) {
     aclTensor* acl_tensor = aclnn_zero(ctx, dst, ne, dims, type, type_size);
-    float value = 1.0f;
-    aclScalar* alpha = aclCreateScalar(&value, aclDataType::ACL_FLOAT);
+    float alpha_host = 1.0f;
+    aclScalar* alpha = aclCreateScalar(&alpha_host, aclDataType::ACL_FLOAT);
     aclScalar* other = aclCreateScalar(&value, aclDataType::ACL_FLOAT);
 
     uint64_t workspaceSize = 0;
@@ -849,4 +851,53 @@ void ggml_cann_rms_norm(ggml_backend_cann_context& ctx, ggml_tensor* dst) {
     ACL_CHECK(aclDestroyTensor(acl_dst));
     ACL_CHECK(aclDestroyTensor(acl_gamma));
     ACL_CHECK(aclDestroyTensor(acl_rstd));
+}
+
+// TODO: performace is low.
+void ggml_cann_diag_mask(ggml_backend_cann_context& ctx, ggml_tensor* dst, float value) {
+    ggml_tensor* src = dst->src[0];
+
+    aclTensor* acl_src = create_acl_tensor(src);
+    aclTensor* acl_dst = create_acl_tensor(dst);
+
+    const int  n_past  = ((int32_t *) dst->op_params)[0];
+
+    aclTensor* mask_tensor =
+        aclnn_ones(ctx, dst, src->ne, GGML_MAX_DIMS, type_mapping(src->type),
+                   ggml_element_size(src), value);
+    
+    uint64_t workspaceSize = 0;
+    aclOpExecutor* executor;
+    void* workspaceAddr = nullptr;
+
+    ACL_CHECK(aclnnInplaceTriuGetWorkspaceSize(mask_tensor, n_past+1, &workspaceSize, &executor));
+    if (workspaceSize > 0) {
+        workspaceAddr = ctx.alloc_buffer(dst, workspaceSize);
+    }
+
+    ACL_CHECK(aclnnInplaceTriu(workspaceAddr, workspaceSize, executor, ctx.stream()));
+
+    ACL_CHECK(aclnnTrilGetWorkspaceSize(acl_src, n_past+1, acl_dst, &workspaceSize, &executor));
+    if (workspaceSize > 0) {
+        workspaceAddr = ctx.alloc_buffer(dst, workspaceSize);
+    }
+
+    ACL_CHECK(aclnnTril(workspaceAddr, workspaceSize, executor, ctx.stream()));
+
+    aclScalar* alpha = nullptr;
+    float alphaValue = 1.0f;
+    alpha = aclCreateScalar(&alphaValue, aclDataType::ACL_FLOAT);
+
+    ACL_CHECK(aclnnInplaceAddGetWorkspaceSize(acl_dst, mask_tensor, alpha,
+                                              &workspaceSize, &executor));
+    if (workspaceSize > 0) {
+        workspaceAddr = ctx.alloc_buffer(dst, workspaceSize);
+    }
+    ACL_CHECK(
+        aclnnInplaceAdd(workspaceAddr, workspaceSize, executor, ctx.stream()));
+
+    ACL_CHECK(aclDestroyScalar(alpha));
+    ACL_CHECK(aclDestroyTensor(mask_tensor));
+    ACL_CHECK(aclDestroyTensor(acl_src));
+    ACL_CHECK(aclDestroyTensor(acl_dst));
 }
