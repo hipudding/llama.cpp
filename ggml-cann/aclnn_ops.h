@@ -54,6 +54,14 @@ void ggml_cann_rms_norm(ggml_backend_cann_context& ctx, ggml_tensor* dst);
 
 void ggml_cann_diag_mask(ggml_backend_cann_context& ctx, ggml_tensor* dst, float value);
 
+void ggml_cann_pool2d(ggml_backend_cann_context& ctx, ggml_tensor* dst);
+
+void ggml_cann_avg_pool2d(ggml_backend_cann_context& ctx, ggml_tensor* dst);
+
+void ggml_cann_max_pool2d(ggml_backend_cann_context& ctx, ggml_tensor* dst);
+
+void ggml_cann_im2col(ggml_backend_cann_context& ctx, ggml_tensor* dst);
+
 template <aclnnStatus getWorkspaceSize(const aclTensor*, const aclTensor*,
                                        aclTensor*, uint64_t*, aclOpExecutor**),
           aclnnStatus execute(void*, uint64_t, aclOpExecutor*, aclrtStream)>
@@ -158,9 +166,5 @@ void ggml_cann_activation(ggml_backend_cann_context& ctx, ggml_tensor* dst) {
 
 void ggml_cann_upsample_nearest2d(ggml_backend_cann_context& ctx, 
                                   ggml_tensor* dst);
-
-void ggml_cann_pool2d(ggml_backend_cann_context& ctx, ggml_tensor* dst);
-void ggml_cann_avg_pool2d(ggml_backend_cann_context& ctx, ggml_tensor* dst);
-void ggml_cann_max_pool2d(ggml_backend_cann_context& ctx, ggml_tensor* dst);
 
 #endif  // CANN_ACLNN_OPS

@@ -7,6 +7,7 @@
 #include <aclnnop/aclnn_group_norm.h>
 #include <aclnnop/aclnn_layer_norm.h>
 #include <aclnnop/aclnn_max_pool.h>
+#include <aclnnop/aclnn_permute.h>
 #include <aclnnop/aclnn_reduce_sum.h>
 #include <aclnnop/aclnn_repeat.h>
 #include <aclnnop/aclnn_softmax.h>
@@ -900,4 +901,183 @@ void ggml_cann_diag_mask(ggml_backend_cann_context& ctx, ggml_tensor* dst, float
     ACL_CHECK(aclDestroyTensor(mask_tensor));
     ACL_CHECK(aclDestroyTensor(acl_src));
     ACL_CHECK(aclDestroyTensor(acl_dst));
+}
+
+void aclnn_cast(ggml_backend_cann_context& ctx, aclTensor* acl_src,
+                aclTensor* acl_dst, aclDataType cast_data_type,
+                ggml_tensor* bind_tensor) {
+    uint64_t workspaceSize = 0;
+    aclOpExecutor* executor;
+    void* workspaceAddr = nullptr;
+    aclrtStream stream = ctx.stream();
+
+    ACL_CHECK(aclnnCastGetWorkspaceSize(acl_src, cast_data_type,
+                                        acl_dst, &workspaceSize, &executor));
+    if (workspaceSize > 0) {
+        workspaceAddr = ctx.alloc_buffer(bind_tensor, workspaceSize);
+    }
+
+    ACL_CHECK(aclnnCast(workspaceAddr, workspaceSize, executor, stream));
+}
+
+void aclnn_permute(ggml_backend_cann_context& ctx, aclTensor *acl_src,
+                   aclTensor* acl_dst, int64_t* new_dim, uint64_t dims,
+                   ggml_tensor* bind_tensor) {
+    aclIntArray* acl_dims = aclCreateIntArray(new_dim, dims);
+
+    uint64_t workspaceSize = 0;
+    aclOpExecutor* executor;
+    void* workspaceAddr = nullptr;
+
+    ACL_CHECK(aclnnPermuteGetWorkspaceSize(acl_src, acl_dims, acl_dst, &workspaceSize, &executor));
+    if(workspaceSize > 0) {
+        workspaceAddr = ctx.alloc_buffer(bind_tensor, workspaceSize);
+    }
+
+    ACL_CHECK(aclnnPermute(workspaceAddr, workspaceSize, executor, ctx.stream()));
+
+    ACL_CHECK(aclDestroyIntArray(acl_dims));
+}
+
+#ifdef __cplusplus
+extern "C" {
+#endif
+aclnnStatus aclnnIm2colGetWorkspaceSize(const aclTensor* self,
+                                        const aclIntArray* kernelSize,
+                                        const aclIntArray* dilation,
+                                        const aclIntArray* padding,
+                                        const aclIntArray* stride,
+                                        aclTensor* out, uint64_t* workspaceSize,
+                                        aclOpExecutor** executor);
+aclnnStatus aclnnIm2col(void* workspace, uint64_t workspaceSize,
+                        aclOpExecutor* executor, aclrtStream stream);
+#ifdef __cplusplus
+}
+#endif
+void ggml_cann_im2col(ggml_backend_cann_context& ctx, ggml_tensor* dst) {
+    ggml_tensor* src0 = dst->src[0]; // kernel
+    ggml_tensor* src1 = dst->src[1]; // input
+
+    GGML_ASSERT(src0->type == GGML_TYPE_F16);
+    GGML_ASSERT(src1->type == GGML_TYPE_F32);
+    GGML_ASSERT(dst->type == GGML_TYPE_F16 || dst->type == GGML_TYPE_F32);
+
+    const int32_t s0 = ((const int32_t *)(dst->op_params))[0];
+    const int32_t s1 = ((const int32_t *)(dst->op_params))[1];
+    const int32_t p0 = ((const int32_t *)(dst->op_params))[2];
+    const int32_t p1 = ((const int32_t *)(dst->op_params))[3];
+    const int32_t d0 = ((const int32_t *)(dst->op_params))[4];
+    const int32_t d1 = ((const int32_t *)(dst->op_params))[5];
+    const bool is_2D = ((const int32_t *)(dst->op_params))[6] == 1;
+
+    GGML_TENSOR_BINARY_OP_LOCALS;
+
+    const int64_t N  = is_2D ? ne13 : ne12;
+    const int64_t IC = is_2D ? ne12 : ne11;
+    const int64_t IH = is_2D ? ne11 : 1;
+    const int64_t IW = ne10;
+
+    const int64_t KH = is_2D ? ne01 : 1;
+    const int64_t KW = ne00;
+
+    const int64_t OH = is_2D ? ne2 : 1;
+    const int64_t OW = ne1;
+
+    GGML_ASSERT(nb00 == sizeof(ggml_fp16_t));
+    GGML_ASSERT(nb10 == sizeof(float));
+
+    // im2col: [N,C,H,W] -> [N, IC * KH * KW, OW * OH]
+    aclTensor* acl_src1 = create_acl_tensor(src1);
+
+    int64_t tmp_im2col_ne[] = {OW * OH , IC * KH * KW, N};
+
+    size_t tmp_im2col_nb[GGML_MAX_DIMS - 1];
+    tmp_im2col_nb[0] = ggml_type_size(src1->type);
+    tmp_im2col_nb[1] = tmp_im2col_nb[0] * (tmp_im2col_ne[0] /
+                                           ggml_blck_size(src1->type));
+    for (int i = 2; i < GGML_MAX_DIMS-1; i++) {
+        tmp_im2col_nb[i] = tmp_im2col_nb[i-1] * tmp_im2col_ne[i-1];
+    }
+
+    void* tmp_im2col_buffer = ctx.alloc_buffer(dst, ggml_nbytes(src1));
+    aclTensor* tmp_im2col_tensor = create_acl_tensor(tmp_im2col_buffer,
+                                                     type_mapping(src1->type),
+                                                     ggml_type_size(src1->type),
+                                                     tmp_im2col_ne,
+                                                     tmp_im2col_nb,
+                                                     GGML_MAX_DIMS-1,
+                                                     ACL_FORMAT_ND);
+
+    std::vector<int64_t> kernel_dims = {KH, KW};
+    std::vector<int64_t> dilation_size = {d1, d0};
+    std::vector<int64_t> padding_dims = {p1, p0};
+    std::vector<int64_t> stride_dims = {s1, s0};
+    auto *kernel_size = aclCreateIntArray(kernel_dims.data(), 2);
+    auto *dilations = aclCreateIntArray(dilation_size.data(), 2);
+    auto *paddings = aclCreateIntArray(padding_dims.data(), 2);
+    auto *strides = aclCreateIntArray(stride_dims.data(), 2);
+
+    uint64_t workspaceSize = 0;
+    aclOpExecutor* executor;
+    void* workspaceAddr = nullptr;
+    aclrtStream stream = ctx.stream();
+
+    ACL_CHECK(aclnnIm2colGetWorkspaceSize(acl_src1, kernel_size, dilations,
+                                          paddings, strides, tmp_im2col_tensor,
+                                          &workspaceSize, &executor));
+
+    if (workspaceSize > 0) {
+        workspaceAddr = ctx.alloc_buffer(dst, workspaceSize);
+    }
+
+    ACL_CHECK(aclnnIm2col(workspaceAddr, workspaceSize, executor, stream));
+    aclrtSynchronizeStream(ctx.stream());
+
+    // cast
+    void* tmp_cast_buffer = ctx.alloc_buffer(dst, ggml_nbytes(dst));
+    aclTensor* tmp_cast_tensor = nullptr;
+    if (src1->type != dst->type) {
+
+        size_t temp_cast_nb[GGML_MAX_DIMS - 1];
+        temp_cast_nb[0] = ggml_type_size(dst->type);
+        temp_cast_nb[1] = temp_cast_nb[0] * (tmp_im2col_ne[0] /
+                                             ggml_blck_size(dst->type));
+        for (int i = 2; i < GGML_MAX_DIMS-1; i++) {
+            temp_cast_nb[i] = temp_cast_nb[i-1] * tmp_im2col_ne[i-1];
+        }
+
+        tmp_cast_tensor = create_acl_tensor(tmp_cast_buffer, 
+                                            type_mapping(dst->type),
+                                            ggml_type_size(dst->type),
+                                            tmp_im2col_ne, temp_cast_nb,
+                                            GGML_MAX_DIMS-1, ACL_FORMAT_ND);
+        aclnn_cast(ctx, tmp_im2col_tensor, tmp_cast_tensor,
+                   type_mapping(dst->type), dst);
+        aclrtSynchronizeStream(ctx.stream());
+    }
+
+    // permute: [N, IC * KH * KW, OW * OH] -> [N, OW * OH, IC * KH * KW]
+    int64_t dst_ne[] = {dst->ne[0], dst->ne[1] * dst->ne[2], dst->ne[3]};
+    size_t dst_nb[] = {dst->nb[0], dst->nb[1], dst->nb[3]};
+    aclTensor* acl_dst = create_acl_tensor(dst, dst_ne, dst_nb,
+                                           GGML_MAX_DIMS-1);
+
+    int64_t permute_dim[] = {0, 2, 1};
+    if (src1->type != dst->type) {
+        aclnn_permute(ctx, tmp_cast_tensor, acl_dst, permute_dim, 3, dst);
+    }
+    else {
+        aclnn_permute(ctx, tmp_im2col_tensor, acl_dst, permute_dim, 3, dst);
+    }
+    aclrtSynchronizeStream(ctx.stream());
+
+    // release
+    ACL_CHECK(aclDestroyTensor(acl_src1));
+    ACL_CHECK(aclDestroyTensor(tmp_im2col_tensor));
+    ACL_CHECK(aclDestroyTensor(tmp_cast_tensor));
+    ACL_CHECK(aclDestroyTensor(acl_dst));
+    ACL_CHECK(aclDestroyIntArray(kernel_size));
+    ACL_CHECK(aclDestroyIntArray(dilations));
+    ACL_CHECK(aclDestroyIntArray(paddings));
+    ACL_CHECK(aclDestroyIntArray(strides));
 }
