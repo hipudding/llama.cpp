@@ -23,6 +23,8 @@
 #include <cstring>
 #include <vector>
 
+#include "kernels/ascendc_kernels.h"
+
 void ggml_cann_repeat(ggml_backend_cann_context& ctx, ggml_tensor* dst) {
     ggml_tensor* src = dst->src[0];
     GGML_ASSERT(ggml_can_repeat(src, dst));
@@ -139,8 +141,8 @@ void aclnn_concat(ggml_backend_cann_context& ctx, aclTensor *acl_src0,
                   aclTensor *acl_src1, aclTensor *acl_dst, int64_t concat_dim,
                   ggml_tensor* bind_tensor) {
 
-    std::vector<aclTensor*> tmp{acl_src0, acl_src1};
-    aclTensorList* tensorList = aclCreateTensorList(tmp.data(), tmp.size());
+    aclTensor* tensors[] = {acl_src0, acl_src1};
+    aclTensorList* tensorList = aclCreateTensorList(tensors, 2);
 
     uint64_t workspaceSize = 0;
     aclOpExecutor* executor;
@@ -156,7 +158,11 @@ void aclnn_concat(ggml_backend_cann_context& ctx, aclTensor *acl_src0,
     aclrtStream main_stream = ctx.stream();
     ACL_CHECK(aclnnCat(workspaceAddr, workspaceSize, executor, main_stream));
 
+    //ACL_CHECK(aclDestroyTensor(acl_src0));
+    //ACL_CHECK(aclDestroyTensor(acl_src1));
     ACL_CHECK(aclDestroyTensorList(tensorList));
+    ACL_CHECK(aclDestroyTensor(acl_dst));
+
 }
 
 void ggml_cann_concat(ggml_backend_cann_context& ctx, ggml_tensor* dst) {

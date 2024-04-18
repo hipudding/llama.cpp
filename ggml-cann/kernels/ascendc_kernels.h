@@ -1,0 +1,4 @@
+#ifndef ASCENDC_KERNELS_H
+#define ASCENDC_KERNELS_H
+
+#endif //ASCENDC_KERNELS_H

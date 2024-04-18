@@ -896,69 +896,14 @@ if (LLAMA_CANN)
 
         # Set headers
         set(CANN_INCLUDE_DIRS "${CANN_INSTALL_DIR}/include" "${CANN_INSTALL_DIR}/include/aclnn")
-        # Find libs
-        set(CANN_LIBRARIES "")
-        # TODO: optimize find libs.
-        # * libascendcl.so
-        if (LLAMA_CANN)
-            set(lib_dir "${CANN_INSTALL_DIR}/acllib/lib64")
-            find_library(found_lib_ascendcl NAMES ascendcl PATHS ${lib_dir} NO_DEFAULT_PATH)
-            if (found_lib_ascendcl)
-                set(lib_ascendcl ${found_lib_ascendcl})
-                list(APPEND CANN_LIBRARIES ${lib_ascendcl})
-                message(STATUS "CANN: libascendcl.so is found at ${lib_dir}")
-            else()
-                set(LLAMA_CANN OFF)
-                message(WARNING "CANN: Missing libascendcl.so. Turning off LLAMA_CANN")
-            endif()
-        endif()
 
-        # * libnnopbase.so
+        # Set libs
         if (LLAMA_CANN)
-            set(lib_dir "${CANN_INSTALL_DIR}/acllib/lib64")
-            find_library(found_lib_nnopbase NAMES nnopbase PATHS ${lib_dir} NO_DEFAULT_PATH)
-            if (found_lib_nnopbase)
-                set(lib_nnopbase ${found_lib_nnopbase})
-                list(APPEND CANN_LIBRARIES ${lib_nnopbase})
-                message(STATUS "CANN: libnnopbase.so is found at ${lib_dir}")
-            else()
-                set(LLAMA_CANN OFF)
-                message(WARNING "CANN: Missing libnnopbase.so. Turning off LLAMA_CANN")
-            endif()
-        endif()
+            # Build Ascendc kernels.
+            add_subdirectory(ggml-cann/kernels)
+            list(APPEND CANN_LIBRARIES ascendcl nnopbase opapi acl_op_compiler ascendc_kernels)
+            LINK_DIRECTORIES(${LINK_DIRECTORIES} ${CANN_INSTALL_DIR}/lib64)
 
-        # * libopapi.so
-        if (LLAMA_CANN)
-            set(lib_dir "${CANN_INSTALL_DIR}/lib64")
-            find_library(found_lib_opapi NAMES opapi PATHS ${lib_dir} NO_DEFAULT_PATH)
-            if (found_lib_opapi)
-                set(lib_opapi ${found_lib_opapi})
-                list(APPEND CANN_LIBRARIES ${lib_opapi})
-                message(STATUS "CANN: libopapi.so is found at ${lib_dir}")
-            else()
-                set(LLAMA_CANN OFF)
-                message(WARNING "CANN: Missing libopapi.so. Turning off LLAMA_CANN")
-            endif()
-        endif()
-
-        # * libacl_op_compiler.so
-        if (LLAMA_CANN)
-            set(lib_dir "${CANN_INSTALL_DIR}/lib64")
-            find_library(found_lib_acl_op_compiler NAMES acl_op_compiler PATHS ${lib_dir} NO_DEFAULT_PATH)
-            if (found_lib_acl_op_compiler)
-                set(lib_acl_op_compiler ${found_lib_acl_op_compiler})
-                list(APPEND CANN_LIBRARIES ${lib_acl_op_compiler})
-                message(STATUS "CANN: libacl_op_compiler.so is found at ${lib_dir}")
-            else()
-                set(LLAMA_CANN OFF)
-                message(WARNING "CANN: Missing libacl_op_compiler.so. Turning off LLAMA_CANN")
-            endif()
-        endif()
-
-        # Set headers and libs
-        if (LLAMA_CANN)
-            message(STATUS "CANN: CANN_INCLUDE_DIRS =  ${CANN_INCLUDE_DIRS}")
-            message(STATUS "CANN: CANN_LIBRARIES =  ${CANN_LIBRARIES}")
             set(GGML_HEADERS_CANN ggml-cann.h)
             file(GLOB GGML_SOURCES_CUDA "ggml-cann/*.cpp")
             list(APPEND GGML_SOURCES_CANN "ggml-cann.cpp")
