@@ -410,7 +410,8 @@ static bool ggml_cann_compute_forward(ggml_backend_cann_context& ctx,
             ggml_cann_arange(ctx, dst);
             break;
         case GGML_OP_TIMESTEP_EMBEDDING:
-            return false;
+            ggml_cann_timestep_embedding(ctx, dst);
+            break;
         case GGML_OP_LEAKY_RELU:
             ggml_cann_leaky_relu(ctx, dst);
             break;
@@ -696,9 +697,7 @@ GGML_CALL static bool ggml_backend_cann_supports_op(ggml_backend_t backend,
         case GGML_OP_UPSCALE:
         case GGML_OP_PAD:
         case GGML_OP_ARANGE:
-            return true;
         case GGML_OP_TIMESTEP_EMBEDDING:
-            return false;
         case GGML_OP_LEAKY_RELU:
             return true;
         default:
