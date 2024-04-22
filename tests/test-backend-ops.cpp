@@ -1627,6 +1627,28 @@ struct test_flash_attn_ext : public test_case {
         ggml_tensor * v = ggml_new_tensor_4d(ctx, type_KV,       hs_padded, kv, nh, 1);
         ggml_tensor * m = mask ? ggml_new_tensor_4d(ctx, GGML_TYPE_F16, kv, GGML_PAD(nb, GGML_KQ_MASK_PAD), 1, 1) : nullptr;
         ggml_tensor * out = ggml_flash_attn_ext(ctx, q, k, v, m, 1.0f/sqrtf(hs), max_bias);
+
+// GGML_OP_ALIBI
+struct test_alibi : public test_case {
+    const ggml_type type;
+    const std::array<int64_t, 4> ne_a;
+    const int n_past;
+    const int n_head;
+    const float bias_max;
+
+    std::string vars() override {
+        return VARS_TO_STR5(type, ne_a, n_past, n_head, bias_max);
+    }
+
+    test_alibi(ggml_type type = GGML_TYPE_F32,
+            std::array<int64_t, 4> ne_a = {30, 20, 10, 1},
+            int n_past = 0, int n_head = 10,
+            float bias_max = 0.9f)
+        : type(type), ne_a(ne_a), n_past(n_past), n_head(n_head), bias_max(bias_max)  {}
+
+    ggml_tensor * build_graph(ggml_context * ctx) override {
+        ggml_tensor * a = ggml_new_tensor(ctx, type, 4, ne_a.data());
+        ggml_tensor * out = ggml_alibi(ctx, a, n_past, n_head, bias_max);
         return out;
     }
 };
@@ -2342,6 +2364,12 @@ static bool test_backend(ggml_backend_t backend, test_mode mode, const char * op
                 }
             }
         }
+
+    for (float bias_max : {-0.5, 0.5}) {
+        test_cases.emplace_back(new test_alibi(GGML_TYPE_F32, {16, 2, 10, 1}, 0, 10, bias_max));
+        test_cases.emplace_back(new test_alibi(GGML_TYPE_F32, {16, 2, 32, 1}, 0, 32, bias_max));
+        test_cases.emplace_back(new test_alibi(GGML_TYPE_F32, {128, 4, 10, 1}, 0, 10, bias_max));
+        test_cases.emplace_back(new test_alibi(GGML_TYPE_F32, {128, 4, 32, 1}, 0, 32, bias_max));
     }
 
     // these tests are disabled to save execution time, but they can be handy for debugging

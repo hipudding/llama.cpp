@@ -450,6 +450,8 @@ static bool ggml_cann_compute_forward(ggml_backend_cann_context& ctx,
             break;
         case GGML_OP_ROPE:
         case GGML_OP_ALIBI:
+            ggml_cann_alibi(ctx, dst);
+            break;
         case GGML_OP_IM2COL:
             ggml_cann_im2col(ctx, dst);
             break;
@@ -685,8 +687,9 @@ GGML_CALL static bool ggml_backend_cann_supports_op(ggml_backend_t backend,
             return true;
         case GGML_OP_SOFT_MAX:
         case GGML_OP_ROPE:
-        case GGML_OP_ALIBI:
             return false;
+        case GGML_OP_ALIBI:
+            return true;
         case GGML_OP_IM2COL:
             return true;
         case GGML_OP_POOL_2D:
