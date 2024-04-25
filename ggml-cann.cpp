@@ -431,7 +431,8 @@ static bool ggml_cann_compute_forward(ggml_backend_cann_context& ctx,
             ggml_cann_clamp(ctx, dst);
             break;
         case GGML_OP_CPY:
-            return false;
+            ggml_cann_cpy(ctx, dst);
+            break;
         case GGML_OP_CONT:
             ggml_cann_dup(ctx, dst);
             break;
@@ -664,8 +665,8 @@ GGML_CALL static bool ggml_backend_cann_supports_op(ggml_backend_t backend,
         case GGML_OP_MUL_MAT_ID:
         // embedding
         case GGML_OP_GET_ROWS:
-        case GGML_OP_CPY:
             return false;
+        case GGML_OP_CPY:
         case GGML_OP_DUP:
         case GGML_OP_REPEAT:
         case GGML_OP_CONCAT:
@@ -847,7 +848,7 @@ extern "C" GGML_CALL int ggml_backend_cann_reg_devices();
 
 GGML_CALL int ggml_backend_cann_reg_devices() {
     ACL_CHECK(aclInit(nullptr));
-    uint32_t device_count = ggml_backend_cann_get_device_count();
+    uint32_t device_count = 1;//= ggml_backend_cann_get_device_count();
     // initialization
     for (uint32_t i = 0; i < device_count; i++) {
         char name[128];

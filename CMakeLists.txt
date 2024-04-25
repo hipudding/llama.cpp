@@ -894,20 +894,37 @@ if (LLAMA_CANN)
             endif()
         endif()
 
-        # Set headers
-        set(CANN_INCLUDE_DIRS "${CANN_INSTALL_DIR}/include" "${CANN_INSTALL_DIR}/include/aclnn")
+        # Set header and libs
+        if(LLAMA_CANN)
+            set(CANN_INCLUDE_DIRS 
+                ${CANN_INSTALL_DIR}/include
+                ${CANN_INSTALL_DIR}/include/aclnn
+                ${CANN_INSTALL_DIR}/acllib/include
+            )
 
-        # Set libs
-        if (LLAMA_CANN)
-            # Build Ascendc kernels.
+            # TODO: find libs
+            link_directories(
+                ${CANN_INSTALL_DIR}/lib64 
+                ${CANN_INSTALL_DIR}/aarch64-linux/simulator/Ascend910B1/lib 
+                ${CANN_INSTALL_DIR}/../8.0.RC1.alpha003/tools/tikicpulib/lib/Ascend910B1)
+
             add_subdirectory(ggml-cann/kernels)
-            list(APPEND CANN_LIBRARIES ascendcl nnopbase opapi acl_op_compiler ascendc_kernels)
-            LINK_DIRECTORIES(${LINK_DIRECTORIES} ${CANN_INSTALL_DIR}/lib64)
+            list(APPEND CANN_LIBRARIES
+                ascendcl
+                nnopbase
+                opapi
+                acl_op_compiler
+                cann_kernels
+            )
 
             set(GGML_HEADERS_CANN ggml-cann.h)
             file(GLOB GGML_SOURCES_CUDA "ggml-cann/*.cpp")
             list(APPEND GGML_SOURCES_CANN "ggml-cann.cpp")
-            set(LLAMA_EXTRA_LIBS     ${LLAMA_EXTRA_LIBS}     ${CANN_LIBRARIES})
+
+            message(STATUS "CANN: CANN_INCLUDE_DIRS =  ${CANN_INCLUDE_DIRS}")
+            message(STATUS "CANN: CANN_LIBRARIES =  ${CANN_LIBRARIES}")
+
+            set(LLAMA_EXTRA_LIBS     ${LLAMA_EXTRA_LIBS}     ${CANN_LIBRARIES} )
             set(LLAMA_EXTRA_INCLUDES ${LLAMA_EXTRA_INCLUDES} ${CANN_INCLUDE_DIRS})
             add_compile_definitions(GGML_USE_CANN)
         endif()

@@ -766,12 +766,7 @@ void ggml_cann_max_pool2d(ggml_backend_cann_context& ctx, ggml_tensor* dst) {
     ACL_CHECK(aclDestroyIntArray(dilations));
 }
 
-void ggml_cann_dup(ggml_backend_cann_context& ctx, ggml_tensor* dst) {
-    ggml_tensor* src = dst->src[0];
-
-    aclTensor* acl_src = create_acl_tensor(src);
-    aclTensor* acl_dst = create_acl_tensor(dst);
-
+void cann_copy(ggml_backend_cann_context& ctx, ggml_tensor* dst, aclTensor* acl_src, aclTensor* acl_dst) {
     uint64_t workspaceSize = 0;
     aclOpExecutor* executor;
     void* workspaceAddr = nullptr;
@@ -786,6 +781,16 @@ void ggml_cann_dup(ggml_backend_cann_context& ctx, ggml_tensor* dst) {
     aclrtStream stream = ctx.stream();
     ACL_CHECK(aclnnInplaceCopy(workspaceAddr, workspaceSize, executor, stream));
 
+}
+
+void ggml_cann_dup(ggml_backend_cann_context& ctx, ggml_tensor* dst) {
+    ggml_tensor* src = dst->src[0];
+
+    aclTensor* acl_src = create_acl_tensor(src);
+    aclTensor* acl_dst = create_acl_tensor(dst);
+
+    cann_copy(ctx, dst, acl_src, acl_dst);
+    
     ACL_CHECK(aclDestroyTensor(acl_src));
     ACL_CHECK(aclDestroyTensor(acl_dst));
 }
@@ -1583,4 +1588,23 @@ void ggml_cann_alibi(ggml_backend_cann_context& ctx, ggml_tensor* dst) {
     ACL_CHECK(aclDestroyTensor(tmp_mk_tensor));
     ACL_CHECK(aclDestroyTensor(tmp_arange3_tensor));
     ACL_CHECK(aclDestroyTensor(tmp_output_tensor));
+}
+
+void ggml_cann_cpy(ggml_backend_cann_context& ctx, ggml_tensor* dst) {
+    ggml_tensor* src = dst->src[0];
+
+    aclTensor* acl_src = create_acl_tensor(src);
+    aclTensor* acl_dst = create_acl_tensor(dst);
+
+    if(!ggml_is_quantized(dst->type)) {
+        cann_copy(ctx, dst, acl_src, acl_dst);
+    } else {
+        uint8_t* size = (uint8_t*)ctx.alloc_buffer(dst, sizeof(size_t));
+        size_t ne = ggml_nelements(src);
+        aclrtMemcpy(size, sizeof(size_t), &ne, sizeof(size_t), ACL_MEMCPY_HOST_TO_DEVICE);
+        size_t ne1;
+        aclrtMemcpy(&ne1, sizeof(size_t), size, sizeof(size_t), ACL_MEMCPY_DEVICE_TO_HOST);
+
+        cann_quantize_q4_0(1, nullptr, (uint8_t*)src->data, (uint8_t*)dst->data, size);
+    }
 }
