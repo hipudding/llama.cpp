@@ -687,6 +687,7 @@ GGML_CALL static bool ggml_backend_cann_supports_op(ggml_backend_t backend,
         case GGML_OP_DIAG_MASK_INF:
             return true;
         case GGML_OP_SOFT_MAX:
+            return true;
         case GGML_OP_ROPE:
             return false;
         case GGML_OP_ALIBI:
