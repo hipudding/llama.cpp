@@ -5,6 +5,7 @@
 #include <cstdio>
 #include <mutex>
 #include <cmath>
+#include <cstring>
 
 #include "ggml-backend-impl.h"
 #include "ggml-cann/acl_ops.h"
@@ -68,6 +69,7 @@ struct ggml_backend_cann_buffer_context {
     int32_t device;
     void* dev_ptr = nullptr;
     std::string name;
+    std::vector<void*> tensor_transform_buffers;
 
     ggml_backend_cann_buffer_context(int32_t device, void* dev_ptr)
         : device(device),
@@ -130,10 +132,116 @@ GGML_CALL static void ggml_backend_cann_buffer_init_tensor(
     }
 }
 
+#define QK4_0 32
+typedef struct {
+    uint16_t d;           // delta
+    uint8_t qs[QK4_0 / 2]; // nibbles / quants
+} block_q4_0;
+
+GGML_CALL static void ggml_backend_cann_transform_q4_0(ggml_tensor* tensor, const void *src, void* dst) {
+    GGML_ASSERT(tensor->extra == nullptr);
+    GGML_ASSERT(tensor->op == GGML_OP_NONE);
+
+    void *buffer_host;
+    size_t n_bytes = ggml_nbytes(tensor);
+    int64_t n_elems = ggml_nelements(tensor);
+    int64_t groups = n_elems / QK4_0;
+    size_t quant_bytes = n_elems * sizeof(uint8_t) / 2;
+
+    uint8_t* quant_offset = (uint8_t*)dst;
+    uint16_t* scale_offset = (uint16_t*)((char*)dst + quant_bytes);
+
+    for (int i = 0;i<groups; i++) {
+        block_q4_0 *group = (block_q4_0*)((char*)src + i * sizeof(block_q4_0));
+        *scale_offset = group->d;
+        scale_offset++;
+        
+        // 0-15
+        for (int j = 0;j<QK4_0/2; j+=2) {
+            (*quant_offset) = ((group->qs[j] & 0x0F) << 4);
+            (*quant_offset) |= ((group->qs[j+1] & 0x0F));
+            quant_offset ++;
+        }
+
+        //16-31
+        for (int j = 0;j<QK4_0/2; j+=2) {
+            (*quant_offset) = (group->qs[j] & 0xF0);
+            (*quant_offset) |= (group->qs[j +1] >> 4);
+            quant_offset++;
+        }
+    }
+}
+
+GGML_CALL static void ggml_backend_cann_transform_back_q4_0(const ggml_tensor* tensor, void *src, void *dst) {
+    GGML_ASSERT(tensor->extra == nullptr);
+    GGML_ASSERT(tensor->op == GGML_OP_NONE);
+
+    void *buffer_host;
+    size_t n_bytes = ggml_nbytes(tensor);
+    int64_t n_elems = ggml_nelements(tensor);
+    int64_t groups = n_elems / QK4_0;
+    size_t quant_bytes = n_elems * sizeof(uint8_t) / 2;
+
+    uint8_t* quant_offset = (uint8_t*)src;
+    uint16_t* scale_offset = (uint16_t*)((char*)src + quant_bytes);
+
+    for (int i = 0;i<groups; i++) {
+        block_q4_0 *group = (block_q4_0*)((char*)dst + i * sizeof(block_q4_0));
+        group->d = *scale_offset;
+        scale_offset++;
+        
+        // 0-15
+        for (int j = 0;j<QK4_0/2; j+=2) {
+            group->qs[j] = ((*quant_offset) >> 4);
+            group->qs[j + 1] = ((*quant_offset) & 0x0F);
+            quant_offset++;
+        }
+
+        //16-31
+        for (int j = 0;j<QK4_0/2; j+=2) {
+            group->qs[j] |= ((*quant_offset) & 0xF0);
+            group->qs[j + 1] |= ((*quant_offset) << 4);
+            quant_offset++;
+        }
+    }
+}
+
+GGML_CALL static void ggml_backend_cann_transform(ggml_tensor* tensor, const void* src, void *dst) {
+    std::cout<<"Transform tensor:"<<tensor->name<<std::endl;
+    switch (tensor->type) {
+        case GGML_TYPE_Q4_0:
+            ggml_backend_cann_transform_q4_0(tensor, src, dst);
+            break;
+        default:
+            break;
+    }
+}
+
+GGML_CALL static void ggml_backend_cann_transform_back(const ggml_tensor* tensor, void *src, void *dst) {
+    std::cout<<"Transform tensor back:"<<tensor->name<<std::endl;
+    switch (tensor->type) {
+        case GGML_TYPE_Q4_0:
+            ggml_backend_cann_transform_back_q4_0(tensor, src, dst);
+            break;
+        default:
+            break;
+    }
+}
+
+GGML_CALL static bool need_transform(ggml_type type) {
+    switch (type) {
+        case GGML_TYPE_Q4_0:
+            return true;
+        default:
+            return false;
+    }
+}
+
 GGML_CALL static void ggml_backend_cann_buffer_set_tensor(
     ggml_backend_buffer_t buffer, ggml_tensor* tensor, const void* data,
     size_t offset, size_t size) {
     GGML_ASSERT(tensor->backend == GGML_BACKEND_TYPE_GPU);
+    GGML_ASSERT(size == ggml_nbytes(tensor));
     ggml_backend_cann_buffer_context* ctx =
         (ggml_backend_cann_buffer_context*)buffer->context;
 
@@ -141,20 +249,45 @@ GGML_CALL static void ggml_backend_cann_buffer_set_tensor(
     // TODO: refer to cann(#6017), it use thread's default stream.
     // For acl, synchronous functions use this default stream.
     // Why aclrtSynchronizeDevice?
-    ACL_CHECK(aclrtMemcpy((char*)tensor->data + offset, size, data, size,
-                          ACL_MEMCPY_HOST_TO_DEVICE));
+
+    if(!need_transform(tensor->type)) {
+        ACL_CHECK(aclrtMemcpy(tensor->data, size, (char*)data + offset, size, ACL_MEMCPY_HOST_TO_DEVICE));
+    } else {
+        void* transform_buffer = malloc(size);
+        ggml_backend_cann_transform(tensor, (char*)data + offset, transform_buffer);
+
+    #ifndef NDEBUG
+        void* check_buffer = malloc(size);
+        ggml_backend_cann_transform_back(tensor, transform_buffer, check_buffer);
+        GGML_ASSERT(memcmp((char*)data + offset, check_buffer, size) == 0);
+        free(check_buffer);
+    #endif
+        ACL_CHECK(aclrtMemcpy(tensor->data, size, transform_buffer, size, ACL_MEMCPY_HOST_TO_DEVICE));
+        free(transform_buffer);
+    }
 }
 
 GGML_CALL static void ggml_backend_cann_buffer_get_tensor(
     ggml_backend_buffer_t buffer, const ggml_tensor* tensor, void* data,
     size_t offset, size_t size) {
+    GGML_ASSERT(size == ggml_nbytes(tensor));
     GGML_ASSERT(tensor->backend == GGML_BACKEND_TYPE_GPU);
     ggml_backend_cann_buffer_context* ctx =
         (ggml_backend_cann_buffer_context*)buffer->context;
 
     ggml_cann_set_device(ctx->device);
-    ACL_CHECK(aclrtMemcpy(data, size, (const char*)tensor->data + offset, size,
+
+    if (!need_transform(tensor->type)) {
+       ACL_CHECK(aclrtMemcpy((char*)data + offset, size, tensor->data, size,
                           ACL_MEMCPY_DEVICE_TO_HOST));
+    } else {
+        void* transform_buffer = malloc(size);
+        ACL_CHECK(aclrtMemcpy(transform_buffer, size, tensor->data, size,
+                            ACL_MEMCPY_DEVICE_TO_HOST));
+        ggml_backend_cann_transform_back(tensor, transform_buffer, (char*)data + offset);
+        free(transform_buffer);
+    }
+    
 }
 
 GGML_CALL static bool ggml_backend_cann_buffer_cpy_tensor(
@@ -335,6 +468,7 @@ ggml_backend_cann_buffer_type(int32_t device) {
 
 static bool ggml_cann_compute_forward(ggml_backend_cann_context& ctx,
                                       struct ggml_tensor* dst) {
+    std::cout<<"CANN OP = "<<ggml_op_name(dst->op)<<std::endl;
     switch (dst->op) {
         case GGML_OP_REPEAT:
             ggml_cann_repeat(ctx, dst);
@@ -488,11 +622,6 @@ GGML_CALL static void ggml_backend_cann_free(ggml_backend_t backend) {
     ACL_CHECK(aclrtResetDevice(cann_ctx->device));
     delete cann_ctx;
     delete backend;
-
-    // Finalize when last device freed.
-    if (cann_ctx->device == ggml_backend_cann_get_device_count() - 1) {
-        ACL_CHECK(aclFinalize());
-    }
 }
 
 GGML_CALL static ggml_backend_buffer_type_t
@@ -514,11 +643,22 @@ GGML_CALL static void ggml_backend_cann_set_tensor_async(ggml_backend_t backend,
     ggml_backend_buffer_t buf =
         tensor->view_src ? tensor->view_src->buffer : tensor->buffer;
 
-    GGML_ASSERT(buf->buft == ggml_backend_cann_buffer_type(cann_ctx->device) &&
-                "unsupported buffer type");
+    if(!need_transform(tensor->type)) {
+        ACL_CHECK(aclrtMemcpyAsync(tensor->data, size, (char*)data + offset, size, ACL_MEMCPY_HOST_TO_DEVICE, cann_ctx->stream()));
+    } else {
+        void* transform_buffer = malloc(size);
+        ggml_backend_cann_transform(tensor, (char*)data + offset, transform_buffer);
 
-    ACL_CHECK(aclrtMemcpyAsync((char*)tensor->data + offset, size, data, size,
-                               ACL_MEMCPY_HOST_TO_DEVICE, cann_ctx->stream()));
+    #ifndef NDEBUG
+        void* check_buffer = malloc(size);
+        ggml_backend_cann_transform_back(tensor, transform_buffer, check_buffer);
+        GGML_ASSERT(memcmp((char*)data + offset, check_buffer, size));
+        free(check_buffer);
+    #endif
+        ACL_CHECK(aclrtMemcpyAsync(tensor->data, size, transform_buffer, size, ACL_MEMCPY_HOST_TO_DEVICE, cann_ctx->stream()));
+        ACL_CHECK(aclrtSynchronizeStream(cann_ctx->stream()));
+        free(transform_buffer);
+    }
 }
 
 GGML_CALL static void ggml_backend_cann_get_tensor_async(
@@ -533,9 +673,17 @@ GGML_CALL static void ggml_backend_cann_get_tensor_async(
     GGML_ASSERT(buf->buft == ggml_backend_cann_buffer_type(cann_ctx->device) &&
                 "unsupported buffer type");
 
-    ACL_CHECK(aclrtMemcpyAsync(data, size, (const char*)tensor->data + offset,
-                               size, ACL_MEMCPY_DEVICE_TO_HOST,
-                               cann_ctx->stream()));
+    if (!need_transform(tensor->type)) {
+        ACL_CHECK(aclrtMemcpyAsync((char*)data + offset, size, tensor->data, size,
+                ACL_MEMCPY_DEVICE_TO_HOST, cann_ctx->stream()));
+    } else {
+        void* transform_buffer = malloc(size);
+        ACL_CHECK(aclrtMemcpyAsync(transform_buffer, size, tensor->data, size,
+                            ACL_MEMCPY_DEVICE_TO_HOST, cann_ctx->stream()));
+        ACL_CHECK(aclrtSynchronizeStream(cann_ctx->stream()));
+        ggml_backend_cann_transform_back(tensor, transform_buffer, (char*)data + offset);
+        free(transform_buffer);
+    }
 }
 
 GGML_CALL static bool ggml_backend_cann_cpy_tensor_async(
@@ -609,6 +757,8 @@ GGML_CALL static bool ggml_backend_cann_cpy_tensor_async(
 GGML_CALL static void ggml_backend_cann_synchronize(ggml_backend_t backend) {
     ggml_backend_cann_context* cann_ctx =
         (ggml_backend_cann_context*)backend->context;
+    
+    ggml_cann_set_device(cann_ctx->device);
 
     ACL_CHECK(aclrtSynchronizeStream(cann_ctx->stream()));
 
@@ -624,6 +774,10 @@ GGML_CALL static enum ggml_status ggml_backend_cann_graph_compute(
     ggml_cann_set_device(cann_ctx->device);
 
     for (int i = 0; i < cgraph->n_nodes; i++) {
+        std::cout<<"OP: "<<ggml_op_name(cgraph->nodes[i]->op)<<std::endl;
+    }
+
+    for (int i = 0; i < cgraph->n_nodes; i++) {
         ggml_tensor* node = cgraph->nodes[i];
 
         if (ggml_is_empty(node) || node->op == GGML_OP_RESHAPE ||
@@ -635,6 +789,7 @@ GGML_CALL static enum ggml_status ggml_backend_cann_graph_compute(
         // if tensor is reused, free temp buffers first.
         cann_ctx->free_tensor_buffers(node);
         bool ok = ggml_cann_compute_forward(*cann_ctx, node);
+
         if (!ok) {
             fprintf(stderr, "%s: error: op not supported %s (%s)\n", __func__,
                     node->name, ggml_op_name(node->op));
@@ -685,15 +840,12 @@ GGML_CALL static bool ggml_backend_cann_supports_op(ggml_backend_t backend,
         case GGML_OP_CLAMP:
         case GGML_OP_CONT:
         case GGML_OP_DIAG_MASK_INF:
-            return true;
         case GGML_OP_SOFT_MAX:
             return true;
         case GGML_OP_ROPE:
             return false;
         case GGML_OP_ALIBI:
-            return true;
         case GGML_OP_IM2COL:
-            return true;
         case GGML_OP_POOL_2D:
         case GGML_OP_SUM_ROWS:
         case GGML_OP_ARGSORT:
@@ -848,8 +1000,8 @@ GGML_CALL static ggml_backend_t ggml_backend_reg_cann_init(const char* params,
 extern "C" GGML_CALL int ggml_backend_cann_reg_devices();
 
 GGML_CALL int ggml_backend_cann_reg_devices() {
-    ACL_CHECK(aclInit(nullptr));
-    uint32_t device_count = 1;//= ggml_backend_cann_get_device_count();
+    
+    uint32_t device_count = ggml_backend_cann_get_device_count();
     // initialization
     for (uint32_t i = 0; i < device_count; i++) {
         char name[128];
@@ -859,4 +1011,12 @@ GGML_CALL int ggml_backend_cann_reg_devices() {
                               (void*)(intptr_t)i);
     }
     return device_count;
+}
+
+void ggml_cann_backend_init(void) {
+    ACL_CHECK(aclInit(nullptr));
+}
+
+void ggml_cann_backend_free(void) {
+    ACL_CHECK(aclFinalize());
 }
