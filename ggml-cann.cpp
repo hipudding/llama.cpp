@@ -142,7 +142,6 @@ GGML_CALL static void ggml_backend_cann_transform_q4_0(ggml_tensor* tensor, cons
     GGML_ASSERT(tensor->extra == nullptr);
     GGML_ASSERT(tensor->op == GGML_OP_NONE);
 
-    void *buffer_host;
     size_t n_bytes = ggml_nbytes(tensor);
     int64_t n_elems = ggml_nelements(tensor);
     int64_t groups = n_elems / QK4_0;
@@ -176,7 +175,6 @@ GGML_CALL static void ggml_backend_cann_transform_back_q4_0(const ggml_tensor* t
     GGML_ASSERT(tensor->extra == nullptr);
     GGML_ASSERT(tensor->op == GGML_OP_NONE);
 
-    void *buffer_host;
     size_t n_bytes = ggml_nbytes(tensor);
     int64_t n_elems = ggml_nelements(tensor);
     int64_t groups = n_elems / QK4_0;
@@ -206,11 +204,65 @@ GGML_CALL static void ggml_backend_cann_transform_back_q4_0(const ggml_tensor* t
     }
 }
 
+#define QK8_0 32
+typedef struct {
+    uint16_t d;       // delta
+    int8_t  qs[QK8_0]; // quants
+} block_q8_0;
+
+GGML_CALL static void ggml_backend_cann_transform_q8_0(ggml_tensor* tensor, const void *src, void* dst) {
+    GGML_ASSERT(tensor->extra == nullptr);
+    GGML_ASSERT(tensor->op == GGML_OP_NONE);
+
+    size_t n_bytes = ggml_nbytes(tensor);
+    int64_t n_elems = ggml_nelements(tensor);
+    int64_t groups = n_elems / QK8_0;
+    size_t quant_bytes = n_elems * sizeof(uint8_t);
+
+    uint8_t* quant_offset = (uint8_t*)dst;
+    uint16_t* scale_offset = (uint16_t*)((char*)dst + quant_bytes);
+
+    for (int i = 0;i<groups; i++) {
+        block_q8_0 *group = (block_q8_0*)((char*)src + i * sizeof(block_q8_0));
+        *scale_offset = group->d;
+        scale_offset++;
+        size_t group_quant_size = QK8_0 * sizeof(uint8_t);
+        memcpy(quant_offset, group->qs, group_quant_size);
+        quant_offset += group_quant_size;
+    }
+}
+
+GGML_CALL static void ggml_backend_cann_transform_back_q8_0(const ggml_tensor* tensor, const void *src, void* dst) {
+    GGML_ASSERT(tensor->extra == nullptr);
+    GGML_ASSERT(tensor->op == GGML_OP_NONE);
+
+    size_t n_bytes = ggml_nbytes(tensor);
+    int64_t n_elems = ggml_nelements(tensor);
+    int64_t groups = n_elems / QK8_0;
+    size_t quant_bytes = n_elems * sizeof(uint8_t);
+
+    uint8_t* quant_offset = (uint8_t*)src;
+    uint16_t* scale_offset = (uint16_t*)((char*)src + quant_bytes);
+
+    for (int i = 0;i<groups; i++) {
+        block_q8_0 *group = (block_q8_0*)((char*)dst + i * sizeof(block_q8_0));
+        group->d = *scale_offset;
+        scale_offset++;
+        size_t group_quant_size = QK8_0 * sizeof(uint8_t);
+        memcpy(group->qs, quant_offset, group_quant_size);
+        quant_offset += group_quant_size;
+    }
+}
+
+
 GGML_CALL static void ggml_backend_cann_transform(ggml_tensor* tensor, const void* src, void *dst) {
     std::cout<<"Transform tensor:"<<tensor->name<<std::endl;
     switch (tensor->type) {
         case GGML_TYPE_Q4_0:
             ggml_backend_cann_transform_q4_0(tensor, src, dst);
+            break;
+        case GGML_TYPE_Q8_0:
+            ggml_backend_cann_transform_q8_0(tensor, src, dst);
             break;
         default:
             break;
@@ -223,6 +275,9 @@ GGML_CALL static void ggml_backend_cann_transform_back(const ggml_tensor* tensor
         case GGML_TYPE_Q4_0:
             ggml_backend_cann_transform_back_q4_0(tensor, src, dst);
             break;
+        case GGML_TYPE_Q8_0:
+            ggml_backend_cann_transform_back_q8_0(tensor, src, dst);
+            break;
         default:
             break;
     }
@@ -231,6 +286,7 @@ GGML_CALL static void ggml_backend_cann_transform_back(const ggml_tensor* tensor
 GGML_CALL static bool need_transform(ggml_type type) {
     switch (type) {
         case GGML_TYPE_Q4_0:
+        case GGML_TYPE_Q8_0:
             return true;
         default:
             return false;
@@ -820,7 +876,16 @@ GGML_CALL static bool ggml_backend_cann_supports_op(ggml_backend_t backend,
         case GGML_OP_MUL_MAT_ID:
         // embedding
         case GGML_OP_GET_ROWS:
-            return false;
+            {
+                switch (op->src[0]->type) {
+                    //case GGML_TYPE_Q4_0:
+                    case GGML_TYPE_Q8_0:
+                        return true;
+                    default:
+                        return false;
+                }
+            }
+            break;
         case GGML_OP_CPY:
         case GGML_OP_DUP:
         case GGML_OP_REPEAT:
