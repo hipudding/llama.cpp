@@ -68,6 +68,8 @@ void ggml_cann_alibi(ggml_backend_cann_context& ctx, ggml_tensor* dst);
 
 void ggml_cann_cpy(ggml_backend_cann_context& ctx, ggml_tensor* dst);
 
+void ggml_cann_mul_mat(ggml_backend_cann_context& ctx, ggml_tensor* dst);
+
 template <aclnnStatus getWorkspaceSize(const aclTensor*, const aclTensor*,
                                        aclTensor*, uint64_t*, aclOpExecutor**),
           aclnnStatus execute(void*, uint64_t, aclOpExecutor*, aclrtStream)>

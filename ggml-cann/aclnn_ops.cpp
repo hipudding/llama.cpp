@@ -19,6 +19,7 @@
 #include <aclnnop/aclnn_tril.h>
 #include <aclnnop/aclnn_triu.h>
 #include <aclnnop/aclnn_upsample_nearest_2d.h>
+#include <aclnnop/aclnn_weight_quant_batch_matmul_v2.h>
 #include <float.h>
 
 #include <cmath>
@@ -1694,4 +1695,407 @@ void ggml_cann_get_rows(ggml_backend_cann_context& ctx, ggml_tensor* dst) {
     ggml_tensor* src1 = dst->src[1];
 
     
+}
+
+void aclnn_weight_quant_batch_matmal(ggml_backend_cann_context& ctx, 
+                                     aclTensor *acl_src, aclTensor *acl_weight, 
+                                     aclTensor *acl_antiquant_scale, 
+                                     aclTensor *acl_antiquant_offset,
+                                     int64_t antiquant_groupsize,
+                                     aclTensor *acl_dst, ggml_tensor* bind_tensor) {
+    int8_t cubeMathType = 1;
+    uint64_t workspaceSize = 0;
+    aclOpExecutor* executor;
+    void* workspaceAddr = nullptr;
+    
+    ACL_CHECK(aclnnWeightQuantBatchMatmulV2GetWorkspaceSize(acl_src, acl_weight, 
+                acl_antiquant_scale, acl_antiquant_offset, nullptr, nullptr, nullptr, antiquant_groupsize, acl_dst, &workspaceSize, &executor));
+    
+    if (workspaceSize > 0) {
+        workspaceAddr = ctx.alloc_buffer(bind_tensor, workspaceSize);
+    }
+
+    for (int i=0; i<10; i++) {
+        ACL_CHECK(aclnnWeightQuantBatchMatmulV2(workspaceAddr, workspaceSize, executor, ctx.stream()));
+    }
+}
+
+void ggml_cann_mul_mat_q8_0(ggml_backend_cann_context& ctx, ggml_tensor* dst) {
+    ggml_tensor* src0 = dst->src[0]; // weight
+    ggml_tensor* src1 = dst->src[1]; // input
+
+    int32_t QK8_0 = 32;
+
+    // // cout weight
+    // std::cout << "weight:" <<std::endl;
+    // aclrtSynchronizeStream(ctx.stream());
+    // int8_t* tmp = new int8_t[ggml_nelements(src0)];
+    // aclrtMemcpy(tmp, ggml_nelements(src0) * sizeof(int8_t), src0->data, ggml_nelements(src0) * sizeof(int8_t), ACL_MEMCPY_DEVICE_TO_HOST);
+    // for (int i=0; i<ggml_nelements(src0); i++) {
+    //     printf("%d,", tmp[i]);
+    //     if ((i+1)%64==0) {
+    //         printf("\n");
+    //     }
+    // }
+    // // cout scale
+    // size_t scale_offset = ggml_nelements(src0) * sizeof(uint8_t);
+    // std::cout << "scale:" <<std::endl;
+    // aclrtSynchronizeStream(ctx.stream());
+    // int16_t* tmp1 = new int16_t[ggml_nelements(src0)/QK8_0];
+    // float* output1 = new float[ggml_nelements(src0)/QK8_0]; 
+    // aclrtMemcpy(tmp1, ggml_nelements(src0)/QK8_0 * sizeof(int16_t), src0->data + scale_offset, ggml_nelements(src0)/QK8_0 * sizeof(int16_t), ACL_MEMCPY_DEVICE_TO_HOST);
+    // for (int i=0; i<ggml_nelements(src0)/QK8_0; i++) {
+    //     output1[i] = ggml_fp16_to_fp32(tmp1[i]);
+    //     std::cout << output1[i] << ",";
+    //     if ((i+1)%2==0) {
+    //         printf("\n");
+    //     }
+    // }
+    // cout input
+    // std::cout << "input:" <<std::endl;
+    // aclrtSynchronizeStream(ctx.stream());
+    // float_t* tmp2 = new float_t[ggml_nelements(src1)];
+    // aclrtMemcpy(tmp2, ggml_nelements(src1) * sizeof(float_t), src1->data, ggml_nelements(src1) * sizeof(float_t), ACL_MEMCPY_DEVICE_TO_HOST);
+    // for (int i=0; i<ggml_nelements(src0); i++) {
+    //     printf("%f,", tmp2[i]);
+    //     if ((i+1)%64==0) {
+    //         printf("\n");
+    //     }
+    // }
+    // std::cout << std::endl;
+
+    
+    int64_t n_stride = (src0->ne[0] * src0->ne[1]);  
+    size_t weight_stride = (src0->ne[0] * src0->ne[1]) * sizeof(int8_t);
+    size_t scale_stride = (src0->ne[0] * src0->ne[1]) / QK8_0 * sizeof(ggml_fp16_t);
+    size_t input_stride = (src1->ne[0] * src1->ne[1])  * ggml_type_size(src1->type);
+    size_t dst_stride = (dst->ne[0] * dst->ne[1])  * ggml_type_size(dst->type);
+    for (int i=0; i<src0->ne[3]; i++) {
+        for (int j=0; j<src0->ne[2]; j++) {
+            
+            //Get all quant data, and add new dim for group.
+            //引用qk8_0定义
+            //transpose weight [a, b, c, k] -> [k, a*b*c]
+            int64_t src_ne[] = {src0->ne[1], src0->ne[0]};
+            size_t src_nb[GGML_MAX_DIMS-2];
+            src_nb[0] = src0->ne[0];
+            src_nb[1] = 1;
+
+            size_t offset = (i*src0->ne[2] + j) * weight_stride;
+            aclTensor *acl_weight = create_acl_tensor(src0->data+offset, ACL_INT8, 1, src_ne, src_nb, GGML_MAX_DIMS-2);
+
+            // // cout weight
+            // std::cout << "weight:" <<std::endl;
+            // int nelements = src0->ne[1] * src0->ne[0];
+            // aclrtSynchronizeStream(ctx.stream());
+            // int8_t* tmp = new int8_t[nelements];
+            // aclrtMemcpy(tmp, nelements * sizeof(int8_t), src0->data+offset, nelements * sizeof(int8_t), ACL_MEMCPY_DEVICE_TO_HOST);
+            // for (int i=0; i<nelements; i++) {
+            //     printf("%d,", tmp[i]);
+            // }
+            // std::cout << std::endl;
+
+            // scale: [a, b, c, group_size] -> [group_size, a*b*c]
+            int64_t scale_ne[] = {src0->ne[1], src0->ne[0] / QK8_0};
+            size_t scale_nb[GGML_MAX_DIMS-2];
+            scale_nb[0] = src0->ne[0] / QK8_0 * 2;
+            scale_nb[1] = 2;
+
+            size_t scale_offset = ggml_nelements(src0) * sizeof(uint8_t) + (i*src0->ne[2] + j)
+                                  * scale_stride;
+            aclTensor *acl_scale = create_acl_tensor(src0->data + scale_offset, ACL_FLOAT16,
+                                                    sizeof(ggml_fp16_t), 
+                                                    scale_ne, scale_nb, GGML_MAX_DIMS-2, 
+                                                    ACL_FORMAT_ND);
+            // // cout scale
+            // std::cout << "scale:" <<std::endl;
+            // aclrtSynchronizeStream(ctx.stream());
+            // nelements = src0->ne[1] * src0->ne[0] / QK8_0;
+            // int16_t* tmp1 = new int16_t[nelements];
+            // float* output1 = new float[nelements]; 
+            // aclrtMemcpy(tmp1, nelements * sizeof(int16_t), src0->data + scale_offset, nelements * sizeof(int16_t), ACL_MEMCPY_DEVICE_TO_HOST);
+            // for (int i=0; i<nelements; i++) {
+            //     output1[i] = ggml_fp16_to_fp32(tmp1[i]);
+            //     std::cout << output1[i] << ",";
+            // }
+            // std::cout << std::endl;
+
+            // offset: same shape with scale, value: -8
+            size_t quant_offset_bytes = ggml_nelements(src0) / QK8_0 * sizeof(int16_t);
+            void* quant_offset_buffer = ctx.alloc_buffer(dst, quant_offset_bytes);
+            ACL_CHECK(aclrtMemset(quant_offset_buffer, quant_offset_bytes, 0, quant_offset_bytes));
+            aclTensor* acl_quant_offset_tensor = create_acl_tensor(quant_offset_buffer, 
+                                                                ACL_FLOAT16, 
+                                                                sizeof(int16_t), 
+                                                                scale_ne,
+                                                                scale_nb, GGML_MAX_DIMS-2);
+
+            // // cout offset
+            // std::cout << "offset:" <<std::endl;
+            // aclrtSynchronizeStream(ctx.stream());
+            // int nelement = ggml_nelements(src0)/QK8_0;
+            // int16_t* tmp2 = new int16_t[nelement];
+            // float* output2 = new float[nelement]; 
+            // aclrtMemcpy(tmp2, nelement * sizeof(int16_t), quant_offset_buffer, nelement * sizeof(int16_t), ACL_MEMCPY_DEVICE_TO_HOST);
+            // for (int i=0; i<nelement; i++) {
+            //     output2[i] = ggml_fp16_to_fp32(tmp2[i]);
+            //     std::cout << output2[i] << ",";
+            // }
+            // std::cout << std::endl;
+            
+            // broadcast
+            int nr0 = src1->ne[2] % src0->ne[2];
+            int nr1 = src1->ne[3] % src0->ne[3];
+            for (int m=0; m<nr0; m++) {
+                for (int n=0; n<nr1; n++) {
+                    
+                }
+            }
+            // input: [a,b,c,k] -> [a*b*c, k]
+            int64_t src1_ne[] = {src1->ne[0], src1->ne[1]};
+            size_t src1_nb[GGML_MAX_DIMS-2];
+            src1_nb[0] = ggml_type_size(src1->type);
+            src1_nb[1] = src1_nb[0] * src1->ne[0];
+
+            size_t input_offset = (i*src0->ne[2] + j) * input_stride;
+            aclTensor *acl_src1 = create_acl_tensor(src1->data+input_offset, type_mapping(src1->type),
+                                                    ggml_type_size(src1->type),
+                                                    src1_ne, src1_nb, GGML_MAX_DIMS-2, 
+                                                    ACL_FORMAT_ND);
+
+            // // cout input
+            // std::cout << "input:" <<std::endl;
+            // aclrtSynchronizeStream(ctx.stream());
+            // nelements = src1->ne[0]*src1->ne[1];
+            // float_t* tmp2 = new float_t[nelements];
+            // aclrtMemcpy(tmp2, nelements * sizeof(float_t), src1->data+input_offset, nelements * sizeof(float_t), ACL_MEMCPY_DEVICE_TO_HOST);
+            // for (int i=0; i<nelements; i++) {
+            //     printf("%f,", tmp2[i]);
+            // }
+            // std::cout << std::endl;
+
+            aclTensor *acl_src1_f16_tensor = nullptr;
+            if (src1->type == GGML_TYPE_F32) {
+                // cast input to float16
+                size_t src1_fp16_nb[GGML_MAX_DIMS-2];
+                src1_fp16_nb[0] = sizeof(ggml_fp16_t);
+                src1_fp16_nb[1] = sizeof(ggml_fp16_t) * src1->ne[0];    
+                
+                size_t src1_f16_nbytes = src1->ne[0] * src1->ne[1] * sizeof(ggml_fp16_t);
+                void* acl_src1_f16_buffer = ctx.alloc_buffer(dst, src1_f16_nbytes);
+                acl_src1_f16_tensor = create_acl_tensor(acl_src1_f16_buffer, ACL_FLOAT16,
+                                                        sizeof(ggml_fp16_t), 
+                                                        src1_ne, src1_fp16_nb, GGML_MAX_DIMS-2, 
+                                                        ACL_FORMAT_ND);
+                aclnn_cast(ctx, acl_src1, acl_src1_f16_tensor, ACL_FLOAT16, dst);
+            }
+            else {
+                acl_src1_f16_tensor = acl_src1;
+            }
+
+            // quant_mulmat
+            int64_t dst_ne[] = {dst->ne[0], dst->ne[1]};
+            size_t dst_nb[GGML_MAX_DIMS-2];
+            dst_nb[0] = sizeof(ggml_fp16_t);
+            dst_nb[1] = sizeof(ggml_fp16_t) * dst->ne[0];
+            size_t acl_quant_dst_bytes = dst->ne[0] * dst->ne[1] * sizeof(ggml_fp16_t);
+            void* acl_quant_dst_buffer = ctx.alloc_buffer(dst, acl_quant_dst_bytes);
+            aclTensor *acl_quant_dst_tensor = create_acl_tensor(acl_quant_dst_buffer, ACL_FLOAT16,
+                                                    sizeof(ggml_fp16_t), 
+                                                    dst_ne, dst_nb, GGML_MAX_DIMS-2, 
+                                                    ACL_FORMAT_ND);
+
+            int64_t antiquant_groupsize = 32;
+            aclnn_weight_quant_batch_matmal(ctx, acl_src1_f16_tensor, acl_weight, 
+                                            acl_scale, nullptr,
+                                            antiquant_groupsize, acl_quant_dst_tensor, dst);
+            // float16 to float32
+            int64_t dst_fp32_ne[] = {dst->ne[0], dst->ne[1]};
+            size_t dst_fp32_nb[GGML_MAX_DIMS-2];
+            dst_fp32_nb[0] = sizeof(float_t);
+            dst_fp32_nb[1] = sizeof(float_t) * dst->ne[0];
+            size_t dst_offset = (i*src0->ne[2] + j) * dst_stride;
+            aclTensor *acl_dst = create_acl_tensor(dst->data+dst_offset, ACL_FLOAT,
+                                                sizeof(float_t), 
+                                                dst_fp32_ne, dst_fp32_nb, 
+                                                GGML_MAX_DIMS-2, 
+                                                ACL_FORMAT_ND);
+            aclnn_cast(ctx, acl_quant_dst_tensor, acl_dst, ACL_FLOAT, dst);
+
+            // // cout output
+            // std::cout << "output:" <<std::endl;
+            // aclrtSynchronizeStream(ctx.stream());
+            // nelements = dst->ne[0]*dst->ne[1];
+            // float_t* tmp3 = new float_t[nelements];
+            // aclrtMemcpy(tmp3, nelements * sizeof(float_t), dst->data+dst_offset, nelements * sizeof(float_t), ACL_MEMCPY_DEVICE_TO_HOST);
+            // for (int i=0; i<nelements; i++) {
+            //     printf("%f,", tmp3[i]);
+            // }
+            // std::cout << std::endl;
+            // float result = 0;
+            // for (int i=0; i<64; i++) {
+            //     result += tmp2[i] * tmp[i] * output1[int(i/32)];
+            // }
+            // std::cout << "!!!!!!!! manual result: " << result << "\n" << std::endl;
+        }
+    }
+}
+
+void ggml_cann_mul_mat(ggml_backend_cann_context& ctx, ggml_tensor* dst) {
+    const enum ggml_type type = dst->src[0]->type;
+    switch (type) {
+        // case GGML_TYPE_F32:
+        //     ggml_cann_mul_mat_fp16(ctx, dst);
+        //     break;
+        // case GGML_TYPE_F16:
+        //     ggml_cann_mul_mat_fp32(ctx, dst);
+        //     break;
+        // case GGML_TYPE_Q4_0:
+        //     ggml_cann_mul_mat_q4_0(ctx, dst);
+        //     break;
+        case GGML_TYPE_Q8_0:
+            ggml_cann_mul_mat_q8_0(ctx, dst);
+            break;
+        default:
+            break;
+    }
+}
+
+
+void ggml_cann_mul_mat_q8_0_backup(ggml_backend_cann_context& ctx, ggml_tensor* dst) {
+    ggml_tensor* src0 = dst->src[0]; // weight
+    ggml_tensor* src1 = dst->src[1]; // input
+
+    if (src1->ne[2] % src0->ne[2] !=0 || src1->ne[3] % src0->ne[3] !=0 ) {
+        // need broadcast
+    }
+
+    for (int i=0; i<src0->ne[2]; i++) {
+        for (int j=0; j<src0->ne[3]; j++) {
+            
+            //Get all quant data, and add new dim for group.
+            //引用qk8_0定义
+            //transpose weight [a, b, c, k] -> [k, a*b*c]
+            int32_t QK8_0 = 32;
+            int64_t src_ne[] = {src0->ne[1]*src0->ne[2]*src0->ne[3], src0->ne[0]};
+            size_t src_nb[GGML_MAX_DIMS-2];
+            src_nb[0] = src0->ne[0];
+            src_nb[1] = 1;
+
+            // // cout weight
+            // std::cout << "weight:" <<std::endl;
+            // aclrtSynchronizeStream(ctx.stream());
+            // int8_t* tmp = new int8_t[ggml_nelements(src0)];
+            // aclrtMemcpy(tmp, ggml_nelements(src0) * sizeof(int8_t), src0->data, ggml_nelements(src0) * sizeof(int8_t), ACL_MEMCPY_DEVICE_TO_HOST);
+            // for (int i=0; i<ggml_nelements(src0); i++) {
+            //     printf("%d,", tmp[i]);
+            // }
+            // std::cout << std::endl;
+
+            aclTensor *acl_weight = create_acl_tensor(src0->data, ACL_INT8, 1, src_ne, src_nb, GGML_MAX_DIMS-2);
+
+            // scale: [a, b, c, group_size] -> [group_size, a*b*c]
+            int64_t scale_ne[] = {src0->ne[1]*src0->ne[2]*src0->ne[3], src0->ne[0] / QK8_0};
+            size_t scale_nb[GGML_MAX_DIMS-2];
+            scale_nb[0] = src0->ne[0] / QK8_0 * 2;
+            scale_nb[1] = 2;
+
+            size_t scale_offset = ggml_nelements(src0) * sizeof(uint8_t);
+            aclTensor *acl_scale = create_acl_tensor(src0->data + scale_offset, ACL_FLOAT16,
+                                                    sizeof(ggml_fp16_t), 
+                                                    scale_ne, scale_nb, GGML_MAX_DIMS-2, 
+                                                    ACL_FORMAT_ND);
+            // // cout scale
+            // std::cout << "scale:" <<std::endl;
+            // aclrtSynchronizeStream(ctx.stream());
+            // int16_t* tmp1 = new int16_t[ggml_nelements(src0)/QK8_0];
+            // float* output1 = new float[ggml_nelements(src0)/QK8_0]; 
+            // aclrtMemcpy(tmp1, ggml_nelements(src0)/QK8_0 * sizeof(int16_t), src0->data + scale_offset, ggml_nelements(src0)/QK8_0 * sizeof(int16_t), ACL_MEMCPY_DEVICE_TO_HOST);
+            // for (int i=0; i<ggml_nelements(src0)/QK8_0; i++) {
+            //     output1[i] = ggml_fp16_to_fp32(tmp1[i]);
+            //     std::cout << output1[i] << ",";
+            // }
+            // std::cout << std::endl;
+
+            // offset: same shape with scale, value: -8
+            size_t quant_offset_bytes = ggml_nelements(src0) / QK8_0 * sizeof(int16_t);
+            void* quant_offset_buffer = ctx.alloc_buffer(dst, quant_offset_bytes);
+            ACL_CHECK(aclrtMemset(quant_offset_buffer, quant_offset_bytes, 0, quant_offset_bytes));
+            aclTensor* acl_quant_offset_tensor = create_acl_tensor(quant_offset_buffer, 
+                                                                ACL_FLOAT16, 
+                                                                sizeof(int16_t), 
+                                                                scale_ne,
+                                                                scale_nb, GGML_MAX_DIMS-2);
+
+            // // cout offset
+            // std::cout << "offset:" <<std::endl;
+            // aclrtSynchronizeStream(ctx.stream());
+            // int nelement = ggml_nelements(src0)/QK8_0;
+            // int16_t* tmp2 = new int16_t[nelement];
+            // float* output2 = new float[nelement]; 
+            // aclrtMemcpy(tmp2, nelement * sizeof(int16_t), quant_offset_buffer, nelement * sizeof(int16_t), ACL_MEMCPY_DEVICE_TO_HOST);
+            // for (int i=0; i<nelement; i++) {
+            //     output2[i] = ggml_fp16_to_fp32(tmp2[i]);
+            //     std::cout << output2[i] << ",";
+            // }
+            // std::cout << std::endl;
+            
+            // input: [a,b,c,k] -> [a*b*c, k]
+            int64_t src1_ne[] = {src1->ne[0], src1->ne[1]*src1->ne[2]*src1->ne[3]};
+            size_t src1_nb[GGML_MAX_DIMS-2];
+            src1_nb[0] = ggml_type_size(src1->type);
+            src1_nb[1] = src1_nb[0] * src1->ne[0];
+
+            aclTensor *acl_src1 = create_acl_tensor(src1->data, type_mapping(src1->type),
+                                                    ggml_type_size(src1->type),
+                                                    src1_ne, src1_nb, GGML_MAX_DIMS-2, 
+                                                    ACL_FORMAT_ND);
+            aclTensor *acl_src1_f16_tensor = nullptr;
+            if (src1->type == GGML_TYPE_F32) {
+                // cast input to float16
+                size_t src1_fp16_nb[GGML_MAX_DIMS-2];
+                src1_fp16_nb[0] = sizeof(ggml_fp16_t);
+                src1_fp16_nb[1] = sizeof(ggml_fp16_t) * src1->ne[0];    
+                
+                size_t src1_f16_nbytes = ggml_nelements(src1) * sizeof(ggml_fp16_t);
+                void* acl_src1_f16_buffer = ctx.alloc_buffer(dst, src1_f16_nbytes);
+                acl_src1_f16_tensor = create_acl_tensor(acl_src1_f16_buffer, ACL_FLOAT16,
+                                                        sizeof(ggml_fp16_t), 
+                                                        src1_ne, src1_fp16_nb, GGML_MAX_DIMS-2, 
+                                                        ACL_FORMAT_ND);
+                aclnn_cast(ctx, acl_src1, acl_src1_f16_tensor, ACL_FLOAT16, dst);
+            }
+            else {
+                acl_src1_f16_tensor = acl_src1;
+            }
+
+            // quantmulmat
+            int64_t dst_ne[] = {dst->ne[0], dst->ne[1]*dst->ne[2]*dst->ne[3]};
+            size_t dst_nb[GGML_MAX_DIMS-2];
+            dst_nb[0] = sizeof(ggml_fp16_t);
+            dst_nb[1] = sizeof(ggml_fp16_t) * dst->ne[0];
+            size_t acl_quant_dst_bytes = ggml_nelements(dst) * sizeof(ggml_fp16_t);
+            void* acl_quant_dst_buffer = ctx.alloc_buffer(dst, acl_quant_dst_bytes);
+            aclTensor *acl_quant_dst_tensor = create_acl_tensor(acl_quant_dst_buffer, ACL_FLOAT16,
+                                                    sizeof(ggml_fp16_t), 
+                                                    dst_ne, dst_nb, GGML_MAX_DIMS-2, 
+                                                    ACL_FORMAT_ND);
+
+            int64_t antiquant_groupsize = 32;
+            aclnn_weight_quant_batch_matmal(ctx, acl_src1_f16_tensor, acl_weight, 
+                                            acl_scale, nullptr,
+                                            antiquant_groupsize, acl_quant_dst_tensor, dst);
+            // float16 to float32
+            int64_t dst_fp32_ne[] = {dst->ne[0], dst->ne[1]*dst->ne[2]*dst->ne[3]};
+            size_t dst_fp32_nb[GGML_MAX_DIMS-2];
+            dst_fp32_nb[0] = sizeof(float_t);
+            dst_fp32_nb[1] = sizeof(float_t) * dst->ne[0];
+            aclTensor *acl_dst = create_acl_tensor(dst->data, ACL_FLOAT,
+                                                sizeof(float_t), 
+                                                dst_fp32_ne, dst_fp32_nb, 
+                                                GGML_MAX_DIMS-2, 
+                                                ACL_FORMAT_ND);
+            aclnn_cast(ctx, acl_quant_dst_tensor, acl_dst, ACL_FLOAT, dst);
+        }
+    }
 }
