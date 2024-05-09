@@ -256,7 +256,6 @@ GGML_CALL static void ggml_backend_cann_transform_back_q8_0(const ggml_tensor* t
 
 
 GGML_CALL static void ggml_backend_cann_transform(ggml_tensor* tensor, const void* src, void *dst) {
-    std::cout<<"Transform tensor:"<<tensor->name<<std::endl;
     switch (tensor->type) {
         case GGML_TYPE_Q4_0:
             ggml_backend_cann_transform_q4_0(tensor, src, dst);
@@ -270,7 +269,6 @@ GGML_CALL static void ggml_backend_cann_transform(ggml_tensor* tensor, const voi
 }
 
 GGML_CALL static void ggml_backend_cann_transform_back(const ggml_tensor* tensor, void *src, void *dst) {
-    std::cout<<"Transform tensor back:"<<tensor->name<<std::endl;
     switch (tensor->type) {
         case GGML_TYPE_Q4_0:
             ggml_backend_cann_transform_back_q4_0(tensor, src, dst);
@@ -831,9 +829,9 @@ GGML_CALL static enum ggml_status ggml_backend_cann_graph_compute(
 
     ggml_cann_set_device(cann_ctx->device);
 
-    // for (int i = 0; i < cgraph->n_nodes; i++) {
-    //     std::cout<<"OP: "<<ggml_op_name(cgraph->nodes[i]->op)<<std::endl;
-    // }
+    for (int i = 0; i < cgraph->n_nodes; i++) {
+        std::cout<<"OP: "<<ggml_op_name(cgraph->nodes[i]->op)<<std::endl;
+    }
 
     for (int i = 0; i < cgraph->n_nodes; i++) {
         ggml_tensor* node = cgraph->nodes[i];
@@ -875,8 +873,17 @@ GGML_CALL static bool ggml_backend_cann_supports_op(ggml_backend_t backend,
                     return false;
             }
         case GGML_OP_MUL_MAT:
-            return true;
+            {
+                switch (op->src[0]->type) {
+                    //case GGML_TYPE_Q4_0:
+                    case GGML_TYPE_Q8_0:
+                        return true;
+                    default:
+                        return false;
+                }
+            }
         case GGML_OP_MUL_MAT_ID:
+            return false;
         // embedding
         case GGML_OP_GET_ROWS:
             {
@@ -890,6 +897,15 @@ GGML_CALL static bool ggml_backend_cann_supports_op(ggml_backend_t backend,
             }
             break;
         case GGML_OP_CPY:
+            {
+                switch (op->src[0]->type) {
+                    //case GGML_TYPE_Q4_0:
+                    case GGML_TYPE_Q8_0:
+                        return true;
+                    default:
+                        return false;
+                }
+            }
         case GGML_OP_DUP:
         case GGML_OP_REPEAT:
         case GGML_OP_CONCAT:

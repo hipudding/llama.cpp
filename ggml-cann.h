@@ -26,6 +26,8 @@ GGML_API GGML_CALL void ggml_backend_cann_get_device_description(
 GGML_API GGML_CALL void ggml_backend_cann_get_device_memory(int32_t device,
                                                             size_t* free,
                                                             size_t* total);
+void ggml_cann_backend_init(void);
+void ggml_cann_backend_free(void);
 #ifdef __cplusplus
 }
 #endif
