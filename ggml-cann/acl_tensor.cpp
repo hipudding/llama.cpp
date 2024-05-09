@@ -78,7 +78,7 @@ aclTensor* create_acl_tensor(const ggml_tensor* tensor, int64_t* bcast_ne,
 
 aclTensor* create_acl_tensor(void* data_ptr, aclDataType dtype,
                              size_t type_size, int64_t* ne, size_t* nb,
-                             int64_t dims, aclFormat format) {
+                             int64_t dims, aclFormat format, size_t offset) {
     int64_t tmp_ne[GGML_MAX_DIMS * 2];
     int64_t tmp_stride[GGML_MAX_DIMS * 2];
 
@@ -90,7 +90,7 @@ aclTensor* create_acl_tensor(void* data_ptr, aclDataType dtype,
     std::reverse(tmp_ne, tmp_ne + dims);
     std::reverse(tmp_stride, tmp_stride + dims);
 
-    aclTensor* acl_tensor = aclCreateTensor(tmp_ne, dims, dtype, tmp_stride, 0,
+    aclTensor* acl_tensor = aclCreateTensor(tmp_ne, dims, dtype, tmp_stride, offset / type_size,
                                             format, tmp_ne, dims, data_ptr);
 
     return acl_tensor;

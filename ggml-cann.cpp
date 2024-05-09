@@ -132,12 +132,6 @@ GGML_CALL static void ggml_backend_cann_buffer_init_tensor(
     }
 }
 
-#define QK4_0 32
-typedef struct {
-    uint16_t d;           // delta
-    uint8_t qs[QK4_0 / 2]; // nibbles / quants
-} block_q4_0;
-
 GGML_CALL static void ggml_backend_cann_transform_q4_0(ggml_tensor* tensor, const void *src, void* dst) {
     GGML_ASSERT(tensor->extra == nullptr);
     GGML_ASSERT(tensor->op == GGML_OP_NONE);
@@ -203,12 +197,6 @@ GGML_CALL static void ggml_backend_cann_transform_back_q4_0(const ggml_tensor* t
         }
     }
 }
-
-#define QK8_0 32
-typedef struct {
-    uint16_t d;       // delta
-    int8_t  qs[QK8_0]; // quants
-} block_q8_0;
 
 GGML_CALL static void ggml_backend_cann_transform_q8_0(ggml_tensor* tensor, const void *src, void* dst) {
     GGML_ASSERT(tensor->extra == nullptr);
@@ -522,13 +510,13 @@ ggml_backend_cann_buffer_type(int32_t device) {
 
 static bool ggml_cann_compute_forward(ggml_backend_cann_context& ctx,
                                       struct ggml_tensor* dst) {
-    // std::cout<<"CANN OP = "<<ggml_op_name(dst->op)<<std::endl;
     switch (dst->op) {
         case GGML_OP_REPEAT:
             ggml_cann_repeat(ctx, dst);
             break;
         case GGML_OP_GET_ROWS:
-            return false;
+            ggml_cann_get_rows(ctx, dst);
+            break;
         case GGML_OP_DUP:
             ggml_cann_dup(ctx, dst);
             break;
@@ -828,10 +816,6 @@ GGML_CALL static enum ggml_status ggml_backend_cann_graph_compute(
         (ggml_backend_cann_context*)backend->context;
 
     ggml_cann_set_device(cann_ctx->device);
-
-    for (int i = 0; i < cgraph->n_nodes; i++) {
-        std::cout<<"OP: "<<ggml_op_name(cgraph->nodes[i]->op)<<std::endl;
-    }
 
     for (int i = 0; i < cgraph->n_nodes; i++) {
         ggml_tensor* node = cgraph->nodes[i];

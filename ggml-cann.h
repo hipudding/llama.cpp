@@ -11,6 +11,19 @@ extern "C" {
 
 #define GGML_CANN_MAX_DEVICES 16
 
+#define QK4_0 32
+typedef struct {
+    uint16_t d;           // delta
+    uint8_t qs[QK4_0 / 2]; // nibbles / quants
+} block_q4_0;
+
+
+#define QK8_0 32
+typedef struct {
+    uint16_t d;       // delta
+    int8_t  qs[QK8_0]; // quants
+} block_q8_0;
+
 // backend API
 GGML_API GGML_CALL ggml_backend_t ggml_backend_cann_init(int32_t device);
 

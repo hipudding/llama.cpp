@@ -15,7 +15,7 @@ aclTensor* create_acl_tensor(const ggml_tensor* tensor,
 
 aclTensor* create_acl_tensor(void* data_ptr, aclDataType dtype,
                              size_t type_size, int64_t* ne, size_t* nb,
-                             int64_t dims, aclFormat format = ACL_FORMAT_ND);
+                             int64_t dims, aclFormat format = ACL_FORMAT_ND, size_t offset = 0);
 
 bool need_bcast(const ggml_tensor* t0, const ggml_tensor* t1);
 
