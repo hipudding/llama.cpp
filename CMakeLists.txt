@@ -904,9 +904,8 @@ if (LLAMA_CANN)
 
             # TODO: find libs
             link_directories(
-                ${CANN_INSTALL_DIR}/lib64 
-                ${CANN_INSTALL_DIR}/aarch64-linux/simulator/Ascend910B1/lib 
-                ${CANN_INSTALL_DIR}/../8.0.RC1.alpha003/tools/tikicpulib/lib/Ascend910B1)
+                ${CANN_INSTALL_DIR}/lib64
+            )
 
             add_subdirectory(ggml-cann/kernels)
             list(APPEND CANN_LIBRARIES
@@ -914,7 +913,7 @@ if (LLAMA_CANN)
                 nnopbase
                 opapi
                 acl_op_compiler
-                cann_kernels
+                ascendc_kernels
             )
 
             set(GGML_HEADERS_CANN ggml-cann.h)

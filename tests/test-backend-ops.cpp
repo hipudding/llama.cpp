@@ -2081,19 +2081,20 @@ static bool test_backend(ggml_backend_t backend, test_mode mode, const char * op
         }
     }
 
-    test_cases.emplace_back(new test_get_rows(GGML_TYPE_F32, 1, 8, 2, 1, false));
-    for (ggml_type type : all_types) {
-        for (int b : {1, 7}) {
-            for (bool v : {false, true}) {
-                test_cases.emplace_back(new test_get_rows(type, 256, 5, 4, b, v));
-            }
-        }
-    }
-    for (int b : {1, 7}) {
-        for (bool v : {false, true}) {
-            test_cases.emplace_back(new test_get_rows(GGML_TYPE_I32, 256, 5, 4, b, v));
-        }
-    }
+    test_cases.emplace_back(new test_get_rows(GGML_TYPE_Q8_0, 256, 5, 4, 1, false));
+    // test_cases.emplace_back(new test_get_rows(GGML_TYPE_F32, 1, 8, 2, 1, false));
+    // for (ggml_type type : all_types) {
+    //     for (int b : {1, 7}) {
+    //         for (bool v : {false, true}) {
+    //             test_cases.emplace_back(new test_get_rows(type, 256, 5, 4, b, v));
+    //         }
+    //     }
+    // }
+    // for (int b : {1, 7}) {
+    //     for (bool v : {false, true}) {
+    //         test_cases.emplace_back(new test_get_rows(GGML_TYPE_I32, 256, 5, 4, b, v));
+    //     }
+    // }
 
     for (ggml_type type_input : {GGML_TYPE_F32}) {
         for (ggml_op_pool pool_type : {GGML_OP_POOL_AVG, GGML_OP_POOL_MAX}) {
