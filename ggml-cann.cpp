@@ -118,7 +118,6 @@ GGML_CALL static void* ggml_backend_cann_buffer_get_base(
 }
 
 GGML_CALL static void ggml_backend_cann_transform_q4_0(ggml_tensor* tensor, const void *src, void* dst) {
-    GGML_ASSERT(tensor->extra == nullptr);
     GGML_ASSERT(tensor->op == GGML_OP_NONE);
 
     size_t n_bytes = ggml_nbytes(tensor);
@@ -136,22 +135,21 @@ GGML_CALL static void ggml_backend_cann_transform_q4_0(ggml_tensor* tensor, cons
         
         // 0-15
         for (int j = 0;j<QK4_0/2; j+=2) {
-            (*quant_offset) = ((group->qs[j] & 0x0F) << 4);
-            (*quant_offset) |= ((group->qs[j+1] & 0x0F));
+            (*quant_offset) = (group->qs[j] & 0x0F);
+            (*quant_offset) |= ((group->qs[j+1] << 4));
             quant_offset ++;
         }
 
         //16-31
         for (int j = 0;j<QK4_0/2; j+=2) {
-            (*quant_offset) = (group->qs[j] & 0xF0);
-            (*quant_offset) |= (group->qs[j +1] >> 4);
+            (*quant_offset) = (group->qs[j] >> 4);
+            (*quant_offset) |= (group->qs[j +1] & 0xF0);
             quant_offset++;
         }
     }
 }
 
 GGML_CALL static void ggml_backend_cann_transform_back_q4_0(const ggml_tensor* tensor, void *src, void *dst) {
-    GGML_ASSERT(tensor->extra == nullptr);
     GGML_ASSERT(tensor->op == GGML_OP_NONE);
 
     size_t n_bytes = ggml_nbytes(tensor);
@@ -169,15 +167,15 @@ GGML_CALL static void ggml_backend_cann_transform_back_q4_0(const ggml_tensor* t
         
         // 0-15
         for (int j = 0;j<QK4_0/2; j+=2) {
-            group->qs[j] = ((*quant_offset) >> 4);
-            group->qs[j + 1] = ((*quant_offset) & 0x0F);
+            group->qs[j] = ((*quant_offset) & 0x0F);
+            group->qs[j + 1] = ((*quant_offset) >> 4);
             quant_offset++;
         }
 
         //16-31
         for (int j = 0;j<QK4_0/2; j+=2) {
-            group->qs[j] |= ((*quant_offset) & 0xF0);
-            group->qs[j + 1] |= ((*quant_offset) << 4);
+            group->qs[j] |= ((*quant_offset) << 4);
+            group->qs[j + 1] |= ((*quant_offset) & 0xF0);
             quant_offset++;
         }
     }
@@ -897,7 +895,7 @@ GGML_CALL static bool ggml_backend_cann_supports_op(ggml_backend_t backend,
         case GGML_OP_GET_ROWS:
             {
                 switch (op->src[0]->type) {
-                    //case GGML_TYPE_Q4_0:
+                    case GGML_TYPE_Q4_0:
                     case GGML_TYPE_Q8_0:
                         return true;
                     default:

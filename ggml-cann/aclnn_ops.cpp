@@ -1610,12 +1610,26 @@ void ggml_cann_get_rows(ggml_backend_cann_context& ctx, ggml_tensor* dst) {
     ggml_tensor* src0 = dst->src[0];
     ggml_tensor* src1 = dst->src[1];
 
-    aclrtlaunch_ascendc_get_row_q8_0(1, ctx.stream(), src0->data, src1->data,
-                                     dst->data, ((ggml_tensor*)src0->extra)->ne,
-                                     ((ggml_tensor*)src1->extra)->ne,
-                                     ((ggml_tensor*)src1->extra)->nb,
-                                     ((ggml_tensor*)dst->extra)->ne,
-                                     ((ggml_tensor*)dst->extra)->nb);
+    switch (src0->type) {
+        case GGML_TYPE_Q4_0:
+            aclrtlaunch_ascendc_get_row_q4_0(
+                1, ctx.stream(), src0->data, src1->data, dst->data,
+                ((ggml_tensor*)src0->extra)->ne,
+                ((ggml_tensor*)src1->extra)->ne,
+                ((ggml_tensor*)src1->extra)->nb, ((ggml_tensor*)dst->extra)->ne,
+                ((ggml_tensor*)dst->extra)->nb);
+            break;
+        case GGML_TYPE_Q8_0:
+            aclrtlaunch_ascendc_get_row_q8_0(
+                24, ctx.stream(), src0->data, src1->data, dst->data,
+                ((ggml_tensor*)src0->extra)->ne,
+                ((ggml_tensor*)src1->extra)->ne,
+                ((ggml_tensor*)src1->extra)->nb, ((ggml_tensor*)dst->extra)->ne,
+                ((ggml_tensor*)dst->extra)->nb);
+            break;
+        default:
+            break;
+    }
 }
 
 void ggml_cann_mul_mat_q8_0(ggml_backend_cann_context& ctx, ggml_tensor* dst) {

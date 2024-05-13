@@ -5,11 +5,14 @@ using namespace AscendC;
 
 #define BUFFER_NUM 2
 
-#define QK8_0 32
+#define QK4_0 32
 
-class GET_ROW_Q8_0 {
+//TODO: uint4b_t is not support by Cast.
+using uint4b_t = IntegerSubType<INT4_BIT_NUM, false>;
+
+class GET_ROW_Q4_0 {
    public:
-    __aicore__ inline GET_ROW_Q8_0() {}
+    __aicore__ inline GET_ROW_Q4_0() {}
     __aicore__ inline void init(GM_ADDR input, GM_ADDR indices, GM_ADDR output,
                                 int64_t *input_ne_ub, int64_t *indices_ne_ub,
                                 size_t *indices_nb_ub, int64_t *output_ne_ub,
@@ -27,7 +30,7 @@ class GET_ROW_Q8_0 {
         }
 
         // one scale for a group.
-        scale_ne[0] /= QK8_0;
+        scale_ne[0] /= QK4_0;
 
         input_stride[0] = 1;
         scale_stride[0] = 1;
@@ -37,9 +40,9 @@ class GET_ROW_Q8_0 {
             scale_stride[i] = scale_stride[i - 1] * scale_ne[i - 1];
         }
 
-        group_size_in_row = input_ne[0] / QK8_0;
+        group_size_in_row = input_ne[0] / QK4_0;
         int64_t scale_offset = input_ne[0] * input_ne[1] * input_ne[2] *
-                               input_ne[3] * sizeof(int8_t);
+                               input_ne[3] / 2;
 
         // Indices has two dims. n_elements = all rows should get.
         // dr, all rows should this thread get.
@@ -55,25 +58,25 @@ class GET_ROW_Q8_0 {
             ir = dr * op_block_idx + tails;
         }
 
-        input_gm.SetGlobalBuffer((__gm__ int8_t *)input);
+        input_gm.SetGlobalBuffer((__gm__ uint4b_t *)input);
         scale_gm.SetGlobalBuffer((__gm__ half *)(input + scale_offset));
         indices_gm.SetGlobalBuffer((__gm__ int32_t *)indices);
         output_gm.SetGlobalBuffer((__gm__ float *)output);
 
-        pipe.InitBuffer(input_queue, BUFFER_NUM, QK8_0 * sizeof(int8_t));
-        pipe.InitBuffer(cast_queue, BUFFER_NUM, QK8_0 * sizeof(half));
-        pipe.InitBuffer(output_queue, BUFFER_NUM, QK8_0 * sizeof(float));
+        pipe.InitBuffer(input_queue, BUFFER_NUM, QK4_0 * sizeof(uint4b_t));
+        pipe.InitBuffer(cast_queue, BUFFER_NUM, QK4_0 * sizeof(half));
+        pipe.InitBuffer(output_queue, BUFFER_NUM, QK4_0 * sizeof(float));
     }
 
     __aicore__ inline void copy_in(uint32_t offset) {
-        LocalTensor<int8_t> input_local = input_queue.AllocTensor<int8_t>();
-        DataCopy(input_local, input_gm[offset], QK8_0);
+        LocalTensor<uint4b_t> input_local = input_queue.AllocTensor<uint4b_t>();
+        DataCopy(input_local, input_gm[offset], QK4_0);
         input_queue.EnQue(input_local);
     }
 
     __aicore__ inline void copy_out(uint32_t offset) {
         LocalTensor<float> output_local = output_queue.DeQue<float>();
-        DataCopy(output_gm[offset], output_local, QK8_0);
+        DataCopy(output_gm[offset], output_local, QK4_0);
         output_queue.FreeTensor(output_local);
     }
 
@@ -94,27 +97,30 @@ class GET_ROW_Q8_0 {
         const int64_t input_offset = selected_row_idx * input_stride[1] +
                                      indices_ne1_idx * input_stride[2] +
                                      indices_ne2_idx * input_stride[3] +
-                                     group * QK8_0;
+                                     group * QK4_0;
         const int64_t scale_offset = selected_row_idx * scale_stride[1] +
                                      indices_ne1_idx * scale_stride[2] +
                                      indices_ne2_idx * scale_stride[3] + group;
         const int64_t output_offset = indices_ne0_idx * output_stride[1] +
                                       indices_ne1_idx * output_stride[2] +
                                       indices_ne2_idx * output_stride[3] +
-                                      group * QK8_0;
+                                      group * QK4_0;
 
         copy_in(input_offset);
-        LocalTensor<int8_t> input_local = input_queue.DeQue<int8_t>();
+        LocalTensor<uint4b_t> input_local = input_queue.DeQue<uint4b_t>();
         LocalTensor<half> cast_local = cast_queue.AllocTensor<half>();
         LocalTensor<float> output_local = output_queue.AllocTensor<float>();
 
         // TODO: cast more data to speed up.
-        Cast(cast_local, input_local, RoundMode::CAST_NONE, QK8_0);
-        Cast(output_local, cast_local, RoundMode::CAST_NONE, QK8_0);
+        Cast(cast_local, input_local, RoundMode::CAST_NONE, QK4_0);
+        Cast(output_local, cast_local, RoundMode::CAST_NONE, QK4_0);
 
+        Adds(output_local, output_local, (float)-8, QK4_0);
         // Only mul need compile by group.
         half scale = scale_gm.GetValue(scale_offset);
-        Muls(output_local, output_local, (float)scale, QK8_0);
+
+        PRINTF("%f\n", (float)scale);
+        Muls(output_local, output_local, (float)scale, QK4_0);
 
         input_queue.FreeTensor(input_local);
         cast_queue.FreeTensor(cast_local);
@@ -150,7 +156,7 @@ class GET_ROW_Q8_0 {
     int64_t group_size_in_row;
 
     TPipe pipe;
-    GlobalTensor<int8_t> input_gm;
+    GlobalTensor<uint4b_t> input_gm;
     GlobalTensor<half> scale_gm;
     GlobalTensor<int32_t> indices_gm;
     GlobalTensor<float> output_gm;
@@ -168,7 +174,7 @@ __aicore__ inline void copy_to_ub(GM_ADDR gm, T *ub, size_t size) {
     }
 }
 
-extern "C" __global__ __aicore__ void ascendc_get_row_q8_0(
+extern "C" __global__ __aicore__ void ascendc_get_row_q4_0(
     GM_ADDR input_gm, GM_ADDR indices_gm, GM_ADDR output_gm,
     GM_ADDR input_ne_gm, GM_ADDR indices_ne_gm, GM_ADDR indices_nb_gm,
     GM_ADDR output_ne_gm, GM_ADDR output_nb_gm) {
@@ -184,8 +190,8 @@ extern "C" __global__ __aicore__ void ascendc_get_row_q8_0(
     copy_to_ub(output_ne_gm, output_ne_ub, 32);
     copy_to_ub(output_nb_gm, output_nb_ub, 32);
 
-    GET_ROW_Q8_0 op;
+    GET_ROW_Q4_0 op;
     op.init(input_gm, indices_gm, output_gm, input_ne_ub, indices_ne_ub,
             indices_nb_ub, output_ne_ub, output_nb_ub);
     op.calculate();
-} 
+}

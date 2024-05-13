@@ -3,6 +3,7 @@ if (NOT SOC_TYPE)
 endif()
 
 file(GLOB SRC_FILES
+    get_row_q4_0.cpp
     get_row_q8_0.cpp
 )
 
@@ -23,4 +24,4 @@ ascendc_library(ascendc_kernels STATIC
     ${SRC_FILES}
 )
 
-#ascendc_compile_definitions(ascendc_kernels PRIVATE -DASCENDC_DUMP)
+ascendc_compile_definitions(ascendc_kernels PRIVATE -DASCENDC_DUMP)
