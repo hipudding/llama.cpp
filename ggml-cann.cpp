@@ -69,14 +69,26 @@ struct ggml_backend_cann_buffer_context {
     int32_t device;
     void* dev_ptr = nullptr;
     std::string name;
-    std::vector<void*> tensor_transform_buffers;
+    std::vector<void*> dev_extra_ptrs;
 
     ggml_backend_cann_buffer_context(int32_t device, void* dev_ptr)
         : device(device),
           dev_ptr(dev_ptr),
           name(GGML_CANN_NAME + std::to_string(device)) {}
 
-    ~ggml_backend_cann_buffer_context() { ACL_CHECK(aclrtFree(dev_ptr)); }
+    void* get_extra_ptr(size_t size) {
+        void *buffer;
+        ACL_CHECK(aclrtMalloc(&buffer, size, ACL_MEM_MALLOC_HUGE_FIRST));
+        dev_extra_ptrs.push_back(buffer);
+        return buffer;
+    }
+
+    ~ggml_backend_cann_buffer_context() {
+        ACL_CHECK(aclrtFree(dev_ptr));
+        for (auto dev_extra_ptr : dev_extra_ptrs) {
+            ACL_CHECK(aclrtFree(dev_extra_ptr));
+        }
+    }
 };
 
 GGML_CALL static const char* ggml_backend_cann_buffer_get_name(
@@ -103,33 +115,6 @@ GGML_CALL static void* ggml_backend_cann_buffer_get_base(
     ggml_backend_cann_buffer_context* ctx =
         (ggml_backend_cann_buffer_context*)buffer->context;
     return ctx->dev_ptr;
-}
-
-GGML_CALL static void ggml_backend_cann_buffer_init_tensor(
-    ggml_backend_buffer_t buffer, ggml_tensor* tensor) {
-    if (tensor->view_src != NULL && tensor->view_offs == 0) {
-        GGML_ASSERT(tensor->view_src->buffer->buft == buffer->buft);
-        tensor->backend = tensor->view_src->backend;
-        tensor->extra = tensor->view_src->extra;
-        return;
-    }
-
-    tensor->backend = GGML_BACKEND_TYPE_GPU;
-
-    // TODO: can backend doesn't support quantized yet. Just leave the code
-    // here.
-    if (ggml_is_quantized(tensor->type)) {
-        // Initialize padding to 0 to avoid possible NaN values
-        size_t original_size = ggml_nbytes(tensor);
-        size_t padded_size =
-            ggml_backend_buft_get_alloc_size(buffer->buft, tensor);
-
-        if (padded_size > original_size && tensor->view_src == nullptr) {
-            size_t memset_size = padded_size - original_size;
-            ACL_CHECK(aclrtMemset((char*)tensor->data + original_size,
-                                  memset_size, 0, memset_size));
-        }
-    }
 }
 
 GGML_CALL static void ggml_backend_cann_transform_q4_0(ggml_tensor* tensor, const void *src, void* dst) {
@@ -199,7 +184,6 @@ GGML_CALL static void ggml_backend_cann_transform_back_q4_0(const ggml_tensor* t
 }
 
 GGML_CALL static void ggml_backend_cann_transform_q8_0(ggml_tensor* tensor, const void *src, void* dst) {
-    GGML_ASSERT(tensor->extra == nullptr);
     GGML_ASSERT(tensor->op == GGML_OP_NONE);
 
     size_t n_bytes = ggml_nbytes(tensor);
@@ -221,7 +205,6 @@ GGML_CALL static void ggml_backend_cann_transform_q8_0(ggml_tensor* tensor, cons
 }
 
 GGML_CALL static void ggml_backend_cann_transform_back_q8_0(const ggml_tensor* tensor, const void *src, void* dst) {
-    GGML_ASSERT(tensor->extra == nullptr);
     GGML_ASSERT(tensor->op == GGML_OP_NONE);
 
     size_t n_bytes = ggml_nbytes(tensor);
@@ -279,6 +262,48 @@ GGML_CALL static bool need_transform(ggml_type type) {
     }
 }
 
+static void set_tensor_extra(ggml_backend_buffer_t buffer, ggml_tensor* tensor) {
+    // if tensor is need transform, make sure all meta data are copied to
+    // npu.
+    // TODO: All tensors should copy meta data to npu, but extra is used to 
+    // record memory usage. Only used for perf test.
+    size_t tensor_meta_size = sizeof(ggml_tensor);
+    ggml_backend_cann_buffer_context* ctx =
+        (ggml_backend_cann_buffer_context*)buffer->context;
+    tensor->extra = ctx->get_extra_ptr(tensor_meta_size);
+    ACL_CHECK(aclrtMemcpy(tensor->extra, tensor_meta_size, tensor,
+                            tensor_meta_size, ACL_MEMCPY_HOST_TO_DEVICE));
+}
+
+GGML_CALL static void ggml_backend_cann_buffer_init_tensor(
+    ggml_backend_buffer_t buffer, ggml_tensor* tensor) {
+    if (tensor->view_src != NULL && tensor->view_offs == 0) {
+        GGML_ASSERT(tensor->view_src->buffer->buft == buffer->buft);
+        tensor->backend = tensor->view_src->backend;
+        set_tensor_extra(buffer, tensor);
+        return;
+    }
+
+    tensor->backend = GGML_BACKEND_TYPE_GPU;
+
+    // TODO: can backend doesn't support quantized yet. Just leave the code
+    // here.
+    if (ggml_is_quantized(tensor->type)) {
+        // Initialize padding to 0 to avoid possible NaN values
+        size_t original_size = ggml_nbytes(tensor);
+        size_t padded_size =
+            ggml_backend_buft_get_alloc_size(buffer->buft, tensor);
+
+        if (padded_size > original_size && tensor->view_src == nullptr) {
+            size_t memset_size = padded_size - original_size;
+            ACL_CHECK(aclrtMemset((char*)tensor->data + original_size,
+                                  memset_size, 0, memset_size));
+        }
+    }
+    set_tensor_extra(buffer, tensor);
+}
+
+// TODO: need handle tensor which pas paddings.
 GGML_CALL static void ggml_backend_cann_buffer_set_tensor(
     ggml_backend_buffer_t buffer, ggml_tensor* tensor, const void* data,
     size_t offset, size_t size) {

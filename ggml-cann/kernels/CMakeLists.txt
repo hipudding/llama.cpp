@@ -22,3 +22,5 @@ include(${ASCENDC_CMAKE_DIR}/ascendc.cmake)
 ascendc_library(ascendc_kernels STATIC
     ${SRC_FILES}
 )
+
+#ascendc_compile_definitions(ascendc_kernels PRIVATE -DASCENDC_DUMP)

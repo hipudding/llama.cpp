@@ -1610,22 +1610,12 @@ void ggml_cann_get_rows(ggml_backend_cann_context& ctx, ggml_tensor* dst) {
     ggml_tensor* src0 = dst->src[0];
     ggml_tensor* src1 = dst->src[1];
 
-    get_row_param param;
-    param.indices_ne[0] = src1->ne[0];
-    param.indices_ne[1] = src1->ne[1];
-    param.input_ne[0] = src0->ne[0];
-    param.input_ne[1] = src0->ne[1];
-    param.input_ne[2] = src0->ne[2];
-
-    void *buffer;
-    ACL_CHECK(aclrtMalloc(&buffer, sizeof(get_row_param), ACL_MEM_MALLOC_HUGE_FIRST));
-
-    ACL_CHECK(aclrtMemcpy(buffer, sizeof(get_row_param), &param, sizeof(get_row_param), ACL_MEMCPY_HOST_TO_DEVICE));
-    
-    aclrtlaunch_ascendc_get_row_q8_0(1, ctx.stream(), src0->data, src1->data, dst->data, buffer);
-
-    ACL_CHECK(aclrtFree(buffer));
-
+    aclrtlaunch_ascendc_get_row_q8_0(1, ctx.stream(), src0->data, src1->data,
+                                     dst->data, ((ggml_tensor*)src0->extra)->ne,
+                                     ((ggml_tensor*)src1->extra)->ne,
+                                     ((ggml_tensor*)src1->extra)->nb,
+                                     ((ggml_tensor*)dst->extra)->ne,
+                                     ((ggml_tensor*)dst->extra)->nb);
 }
 
 void ggml_cann_mul_mat_q8_0(ggml_backend_cann_context& ctx, ggml_tensor* dst) {

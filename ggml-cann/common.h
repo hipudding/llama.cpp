@@ -55,7 +55,6 @@ struct ggml_backend_cann_context {
     aclrtEvent copy_event = nullptr;
 
     aclrtStream streams[GGML_CANN_MAX_STREAMS] = {{nullptr}};
-    int stream_ids[GGML_CANN_MAX_STREAMS] = {0};
 
     // bind temp buffers to stream. Free after sync.
     std::multimap<ggml_tensor*, void*> buffers[GGML_CANN_MAX_STREAMS];
@@ -109,20 +108,20 @@ struct ggml_backend_cann_context {
     // Remove it from stream buffers to avoid double free.
     void free_tensor_buffers(ggml_tensor* dst) {
         // ggml_tensor.extra means which stream are tensor in.
-        if (dst->extra != nullptr) {
-            int stream = *((int*)dst->extra);
-            for (auto pos = buffers[stream].equal_range(dst); pos.first != pos.second;
-                 ++pos.first) {
-                ACL_CHECK(aclrtFree(pos.first->second));
+        for (int i = 0; i < GGML_CANN_MAX_STREAMS; ++i) {
+            if (streams[i] != nullptr) {
+                for (auto pos = buffers[i].equal_range(dst);
+                     pos.first != pos.second; ++pos.first) {
+                    ACL_CHECK(aclrtFree(pos.first->second));
+                }
+                buffers[i].erase(dst);
             }
-            buffers[stream].erase(dst);
         }
     }
 
     aclrtStream stream(int stream) {
         if (streams[stream] == nullptr) {
             ggml_cann_set_device(device);
-            stream_ids[stream] = stream;
             ACL_CHECK(aclrtCreateStream(&streams[stream]));
         }
         return streams[stream];
@@ -134,7 +133,6 @@ struct ggml_backend_cann_context {
     // 2. after stream sync.
     void bind_buffer(ggml_tensor* dst, void* buf, int stream) {
         buffers[stream].insert(std::make_pair(dst, buf));
-        dst->extra = &(stream_ids[stream]);
     }
 
     aclrtStream stream() { return stream(0); }
