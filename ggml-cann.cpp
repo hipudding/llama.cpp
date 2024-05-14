@@ -2,10 +2,10 @@
 
 #include <acl/acl.h>
 
-#include <cstdio>
-#include <mutex>
 #include <cmath>
+#include <cstdio>
 #include <cstring>
+#include <mutex>
 
 #include "ggml-backend-impl.h"
 #include "ggml-cann/acl_ops.h"
@@ -77,7 +77,7 @@ struct ggml_backend_cann_buffer_context {
           name(GGML_CANN_NAME + std::to_string(device)) {}
 
     void* get_extra_ptr(size_t size) {
-        void *buffer;
+        void* buffer;
         ACL_CHECK(aclrtMalloc(&buffer, size, ACL_MEM_MALLOC_HUGE_FIRST));
         dev_extra_ptrs.push_back(buffer);
         return buffer;
@@ -117,7 +117,9 @@ GGML_CALL static void* ggml_backend_cann_buffer_get_base(
     return ctx->dev_ptr;
 }
 
-GGML_CALL static void ggml_backend_cann_transform_q4_0(ggml_tensor* tensor, const void *src, void* dst) {
+GGML_CALL static void ggml_backend_cann_transform_q4_0(ggml_tensor* tensor,
+                                                       const void* src,
+                                                       void* dst) {
     GGML_ASSERT(tensor->op == GGML_OP_NONE);
 
     size_t n_bytes = ggml_nbytes(tensor);
@@ -128,28 +130,35 @@ GGML_CALL static void ggml_backend_cann_transform_q4_0(ggml_tensor* tensor, cons
     uint8_t* quant_offset = (uint8_t*)dst;
     uint16_t* scale_offset = (uint16_t*)((char*)dst + quant_bytes);
 
-    for (int i = 0;i<groups; i++) {
-        block_q4_0 *group = (block_q4_0*)((char*)src + i * sizeof(block_q4_0));
+    for (int i = 0; i < groups; i++) {
+        block_q4_0* group = (block_q4_0*)((char*)src + i * sizeof(block_q4_0));
         *scale_offset = group->d;
         scale_offset++;
-        
+
         // 0-15
-        for (int j = 0;j<QK4_0/2; j+=2) {
+        for (int j = 0; j < QK4_0 / 2; j += 2) {
             (*quant_offset) = (group->qs[j] & 0x0F);
-            (*quant_offset) |= ((group->qs[j+1] << 4));
-            quant_offset ++;
+            (*quant_offset) |= ((group->qs[j + 1] << 4));
+            quant_offset++;
         }
 
-        //16-31
-        for (int j = 0;j<QK4_0/2; j+=2) {
+        // 16-31
+        for (int j = 0; j < QK4_0 / 2; j += 2) {
             (*quant_offset) = (group->qs[j] >> 4);
-            (*quant_offset) |= (group->qs[j +1] & 0xF0);
+            (*quant_offset) |= (group->qs[j + 1] & 0xF0);
             quant_offset++;
         }
     }
+
+    // put (uint4b_t -8) into int4b_t
+    for (quant_offset = (uint8_t*)dst;
+         quant_offset < (uint8_t*)dst + quant_bytes; quant_offset++) {
+        (*quant_offset) ^= 0x88;
+    }
 }
 
-GGML_CALL static void ggml_backend_cann_transform_back_q4_0(const ggml_tensor* tensor, void *src, void *dst) {
+GGML_CALL static void ggml_backend_cann_transform_back_q4_0(
+    const ggml_tensor* tensor, void* src, void* dst) {
     GGML_ASSERT(tensor->op == GGML_OP_NONE);
 
     size_t n_bytes = ggml_nbytes(tensor);
@@ -160,20 +169,25 @@ GGML_CALL static void ggml_backend_cann_transform_back_q4_0(const ggml_tensor* t
     uint8_t* quant_offset = (uint8_t*)src;
     uint16_t* scale_offset = (uint16_t*)((char*)src + quant_bytes);
 
-    for (int i = 0;i<groups; i++) {
-        block_q4_0 *group = (block_q4_0*)((char*)dst + i * sizeof(block_q4_0));
+    for (;quant_offset < (uint8_t*)src + quant_bytes; quant_offset++) {
+        (*quant_offset) ^= 0x88;
+    }
+    quant_offset = (uint8_t*)src;
+
+    for (int i = 0; i < groups; i++) {
+        block_q4_0* group = (block_q4_0*)((char*)dst + i * sizeof(block_q4_0));
         group->d = *scale_offset;
         scale_offset++;
-        
+
         // 0-15
-        for (int j = 0;j<QK4_0/2; j+=2) {
+        for (int j = 0; j < QK4_0 / 2; j += 2) {
             group->qs[j] = ((*quant_offset) & 0x0F);
             group->qs[j + 1] = ((*quant_offset) >> 4);
             quant_offset++;
         }
 
-        //16-31
-        for (int j = 0;j<QK4_0/2; j+=2) {
+        // 16-31
+        for (int j = 0; j < QK4_0 / 2; j += 2) {
             group->qs[j] |= ((*quant_offset) << 4);
             group->qs[j + 1] |= ((*quant_offset) & 0xF0);
             quant_offset++;
@@ -181,7 +195,9 @@ GGML_CALL static void ggml_backend_cann_transform_back_q4_0(const ggml_tensor* t
     }
 }
 
-GGML_CALL static void ggml_backend_cann_transform_q8_0(ggml_tensor* tensor, const void *src, void* dst) {
+GGML_CALL static void ggml_backend_cann_transform_q8_0(ggml_tensor* tensor,
+                                                       const void* src,
+                                                       void* dst) {
     GGML_ASSERT(tensor->op == GGML_OP_NONE);
 
     size_t n_bytes = ggml_nbytes(tensor);
@@ -192,8 +208,8 @@ GGML_CALL static void ggml_backend_cann_transform_q8_0(ggml_tensor* tensor, cons
     uint8_t* quant_offset = (uint8_t*)dst;
     uint16_t* scale_offset = (uint16_t*)((char*)dst + quant_bytes);
 
-    for (int i = 0;i<groups; i++) {
-        block_q8_0 *group = (block_q8_0*)((char*)src + i * sizeof(block_q8_0));
+    for (int i = 0; i < groups; i++) {
+        block_q8_0* group = (block_q8_0*)((char*)src + i * sizeof(block_q8_0));
         *scale_offset = group->d;
         scale_offset++;
         size_t group_quant_size = QK8_0 * sizeof(uint8_t);
@@ -202,7 +218,8 @@ GGML_CALL static void ggml_backend_cann_transform_q8_0(ggml_tensor* tensor, cons
     }
 }
 
-GGML_CALL static void ggml_backend_cann_transform_back_q8_0(const ggml_tensor* tensor, const void *src, void* dst) {
+GGML_CALL static void ggml_backend_cann_transform_back_q8_0(
+    const ggml_tensor* tensor, const void* src, void* dst) {
     GGML_ASSERT(tensor->op == GGML_OP_NONE);
 
     size_t n_bytes = ggml_nbytes(tensor);
@@ -213,8 +230,8 @@ GGML_CALL static void ggml_backend_cann_transform_back_q8_0(const ggml_tensor* t
     uint8_t* quant_offset = (uint8_t*)src;
     uint16_t* scale_offset = (uint16_t*)((char*)src + quant_bytes);
 
-    for (int i = 0;i<groups; i++) {
-        block_q8_0 *group = (block_q8_0*)((char*)dst + i * sizeof(block_q8_0));
+    for (int i = 0; i < groups; i++) {
+        block_q8_0* group = (block_q8_0*)((char*)dst + i * sizeof(block_q8_0));
         group->d = *scale_offset;
         scale_offset++;
         size_t group_quant_size = QK8_0 * sizeof(uint8_t);
@@ -223,8 +240,8 @@ GGML_CALL static void ggml_backend_cann_transform_back_q8_0(const ggml_tensor* t
     }
 }
 
-
-GGML_CALL static void ggml_backend_cann_transform(ggml_tensor* tensor, const void* src, void *dst) {
+GGML_CALL static void ggml_backend_cann_transform(ggml_tensor* tensor,
+                                                  const void* src, void* dst) {
     switch (tensor->type) {
         case GGML_TYPE_Q4_0:
             ggml_backend_cann_transform_q4_0(tensor, src, dst);
@@ -237,7 +254,8 @@ GGML_CALL static void ggml_backend_cann_transform(ggml_tensor* tensor, const voi
     }
 }
 
-GGML_CALL static void ggml_backend_cann_transform_back(const ggml_tensor* tensor, void *src, void *dst) {
+GGML_CALL static void ggml_backend_cann_transform_back(
+    const ggml_tensor* tensor, void* src, void* dst) {
     switch (tensor->type) {
         case GGML_TYPE_Q4_0:
             ggml_backend_cann_transform_back_q4_0(tensor, src, dst);
@@ -260,17 +278,18 @@ GGML_CALL static bool need_transform(ggml_type type) {
     }
 }
 
-static void set_tensor_extra(ggml_backend_buffer_t buffer, ggml_tensor* tensor) {
+static void set_tensor_extra(ggml_backend_buffer_t buffer,
+                             ggml_tensor* tensor) {
     // if tensor is need transform, make sure all meta data are copied to
     // npu.
-    // TODO: All tensors should copy meta data to npu, but extra is used to 
+    // TODO: All tensors should copy meta data to npu, but extra is used to
     // record memory usage. Only used for perf test.
     size_t tensor_meta_size = sizeof(ggml_tensor);
     ggml_backend_cann_buffer_context* ctx =
         (ggml_backend_cann_buffer_context*)buffer->context;
     tensor->extra = ctx->get_extra_ptr(tensor_meta_size);
     ACL_CHECK(aclrtMemcpy(tensor->extra, tensor_meta_size, tensor,
-                            tensor_meta_size, ACL_MEMCPY_HOST_TO_DEVICE));
+                          tensor_meta_size, ACL_MEMCPY_HOST_TO_DEVICE));
 }
 
 GGML_CALL static void ggml_backend_cann_buffer_init_tensor(
@@ -315,19 +334,23 @@ GGML_CALL static void ggml_backend_cann_buffer_set_tensor(
     // For acl, synchronous functions use this default stream.
     // Why aclrtSynchronizeDevice?
 
-    if(!need_transform(tensor->type)) {
-        ACL_CHECK(aclrtMemcpy(tensor->data, size, (char*)data + offset, size, ACL_MEMCPY_HOST_TO_DEVICE));
+    if (!need_transform(tensor->type)) {
+        ACL_CHECK(aclrtMemcpy(tensor->data, size, (char*)data + offset, size,
+                              ACL_MEMCPY_HOST_TO_DEVICE));
     } else {
         void* transform_buffer = malloc(size);
-        ggml_backend_cann_transform(tensor, (char*)data + offset, transform_buffer);
+        ggml_backend_cann_transform(tensor, (char*)data + offset,
+                                    transform_buffer);
 
-    #ifndef NDEBUG
+#ifndef NDEBUG
         void* check_buffer = malloc(size);
-        ggml_backend_cann_transform_back(tensor, transform_buffer, check_buffer);
+        ggml_backend_cann_transform_back(tensor, transform_buffer,
+                                         check_buffer);
         GGML_ASSERT(memcmp((char*)data + offset, check_buffer, size) == 0);
         free(check_buffer);
-    #endif
-        ACL_CHECK(aclrtMemcpy(tensor->data, size, transform_buffer, size, ACL_MEMCPY_HOST_TO_DEVICE));
+#endif
+        ACL_CHECK(aclrtMemcpy(tensor->data, size, transform_buffer, size,
+                              ACL_MEMCPY_HOST_TO_DEVICE));
         free(transform_buffer);
     }
 }
@@ -343,16 +366,16 @@ GGML_CALL static void ggml_backend_cann_buffer_get_tensor(
     ggml_cann_set_device(ctx->device);
 
     if (!need_transform(tensor->type)) {
-       ACL_CHECK(aclrtMemcpy((char*)data + offset, size, tensor->data, size,
-                          ACL_MEMCPY_DEVICE_TO_HOST));
+        ACL_CHECK(aclrtMemcpy((char*)data + offset, size, tensor->data, size,
+                              ACL_MEMCPY_DEVICE_TO_HOST));
     } else {
         void* transform_buffer = malloc(size);
         ACL_CHECK(aclrtMemcpy(transform_buffer, size, tensor->data, size,
-                            ACL_MEMCPY_DEVICE_TO_HOST));
-        ggml_backend_cann_transform_back(tensor, transform_buffer, (char*)data + offset);
+                              ACL_MEMCPY_DEVICE_TO_HOST));
+        ggml_backend_cann_transform_back(tensor, transform_buffer,
+                                         (char*)data + offset);
         free(transform_buffer);
     }
-    
 }
 
 GGML_CALL static bool ggml_backend_cann_buffer_cpy_tensor(
@@ -710,19 +733,25 @@ GGML_CALL static void ggml_backend_cann_set_tensor_async(ggml_backend_t backend,
     ggml_backend_buffer_t buf =
         tensor->view_src ? tensor->view_src->buffer : tensor->buffer;
 
-    if(!need_transform(tensor->type)) {
-        ACL_CHECK(aclrtMemcpyAsync(tensor->data, size, (char*)data + offset, size, ACL_MEMCPY_HOST_TO_DEVICE, cann_ctx->stream()));
+    if (!need_transform(tensor->type)) {
+        ACL_CHECK(aclrtMemcpyAsync(tensor->data, size, (char*)data + offset,
+                                   size, ACL_MEMCPY_HOST_TO_DEVICE,
+                                   cann_ctx->stream()));
     } else {
         void* transform_buffer = malloc(size);
-        ggml_backend_cann_transform(tensor, (char*)data + offset, transform_buffer);
+        ggml_backend_cann_transform(tensor, (char*)data + offset,
+                                    transform_buffer);
 
-    #ifndef NDEBUG
+#ifndef NDEBUG
         void* check_buffer = malloc(size);
-        ggml_backend_cann_transform_back(tensor, transform_buffer, check_buffer);
+        ggml_backend_cann_transform_back(tensor, transform_buffer,
+                                         check_buffer);
         GGML_ASSERT(memcmp((char*)data + offset, check_buffer, size));
         free(check_buffer);
-    #endif
-        ACL_CHECK(aclrtMemcpyAsync(tensor->data, size, transform_buffer, size, ACL_MEMCPY_HOST_TO_DEVICE, cann_ctx->stream()));
+#endif
+        ACL_CHECK(aclrtMemcpyAsync(tensor->data, size, transform_buffer, size,
+                                   ACL_MEMCPY_HOST_TO_DEVICE,
+                                   cann_ctx->stream()));
         ACL_CHECK(aclrtSynchronizeStream(cann_ctx->stream()));
         free(transform_buffer);
     }
@@ -741,14 +770,17 @@ GGML_CALL static void ggml_backend_cann_get_tensor_async(
                 "unsupported buffer type");
 
     if (!need_transform(tensor->type)) {
-        ACL_CHECK(aclrtMemcpyAsync((char*)data + offset, size, tensor->data, size,
-                ACL_MEMCPY_DEVICE_TO_HOST, cann_ctx->stream()));
+        ACL_CHECK(aclrtMemcpyAsync((char*)data + offset, size, tensor->data,
+                                   size, ACL_MEMCPY_DEVICE_TO_HOST,
+                                   cann_ctx->stream()));
     } else {
         void* transform_buffer = malloc(size);
         ACL_CHECK(aclrtMemcpyAsync(transform_buffer, size, tensor->data, size,
-                            ACL_MEMCPY_DEVICE_TO_HOST, cann_ctx->stream()));
+                                   ACL_MEMCPY_DEVICE_TO_HOST,
+                                   cann_ctx->stream()));
         ACL_CHECK(aclrtSynchronizeStream(cann_ctx->stream()));
-        ggml_backend_cann_transform_back(tensor, transform_buffer, (char*)data + offset);
+        ggml_backend_cann_transform_back(tensor, transform_buffer,
+                                         (char*)data + offset);
         free(transform_buffer);
     }
 }
@@ -824,7 +856,7 @@ GGML_CALL static bool ggml_backend_cann_cpy_tensor_async(
 GGML_CALL static void ggml_backend_cann_synchronize(ggml_backend_t backend) {
     ggml_backend_cann_context* cann_ctx =
         (ggml_backend_cann_context*)backend->context;
-    
+
     ggml_cann_set_device(cann_ctx->device);
 
     ACL_CHECK(aclrtSynchronizeStream(cann_ctx->stream()));
@@ -879,40 +911,36 @@ GGML_CALL static bool ggml_backend_cann_supports_op(ggml_backend_t backend,
                 default:
                     return false;
             }
-        case GGML_OP_MUL_MAT:
-            {
-                switch (op->src[0]->type) {
-                    //case GGML_TYPE_Q4_0:
-                    case GGML_TYPE_Q8_0:
-                        return true;
-                    default:
-                        return false;
-                }
+        case GGML_OP_MUL_MAT: {
+            switch (op->src[0]->type) {
+                // case GGML_TYPE_Q4_0:
+                case GGML_TYPE_Q8_0:
+                    return true;
+                default:
+                    return false;
             }
+        }
         case GGML_OP_MUL_MAT_ID:
             return false;
         // embedding
-        case GGML_OP_GET_ROWS:
-            {
-                switch (op->src[0]->type) {
-                    case GGML_TYPE_Q4_0:
-                    case GGML_TYPE_Q8_0:
-                        return true;
-                    default:
-                        return false;
-                }
+        case GGML_OP_GET_ROWS: {
+            switch (op->src[0]->type) {
+                case GGML_TYPE_Q4_0:
+                case GGML_TYPE_Q8_0:
+                    return true;
+                default:
+                    return false;
             }
-            break;
-        case GGML_OP_CPY:
-            {
-                switch (op->src[0]->type) {
-                    //case GGML_TYPE_Q4_0:
-                    case GGML_TYPE_Q8_0:
-                        return true;
-                    default:
-                        return false;
-                }
+        } break;
+        case GGML_OP_CPY: {
+            switch (op->src[0]->type) {
+                // case GGML_TYPE_Q4_0:
+                case GGML_TYPE_Q8_0:
+                    return true;
+                default:
+                    return false;
             }
+        }
         case GGML_OP_DUP:
         case GGML_OP_REPEAT:
         case GGML_OP_CONCAT:
@@ -1104,10 +1132,6 @@ GGML_CALL int ggml_backend_cann_reg_devices() {
     return device_count;
 }
 
-void ggml_cann_backend_init(void) {
-    ACL_CHECK(aclInit(nullptr));
-}
+void ggml_cann_backend_init(void) { ACL_CHECK(aclInit(nullptr)); }
 
-void ggml_cann_backend_free(void) {
-    ACL_CHECK(aclFinalize());
-}
+void ggml_cann_backend_free(void) { ACL_CHECK(aclFinalize()); }

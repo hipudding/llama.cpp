@@ -7,9 +7,6 @@ using namespace AscendC;
 
 #define QK4_0 32
 
-//TODO: uint4b_t is not support by Cast.
-using uint4b_t = IntegerSubType<INT4_BIT_NUM, false>;
-
 class GET_ROW_Q4_0 {
    public:
     __aicore__ inline GET_ROW_Q4_0() {}
@@ -58,18 +55,18 @@ class GET_ROW_Q4_0 {
             ir = dr * op_block_idx + tails;
         }
 
-        input_gm.SetGlobalBuffer((__gm__ uint4b_t *)input);
+        input_gm.SetGlobalBuffer((__gm__ int4b_t *)input);
         scale_gm.SetGlobalBuffer((__gm__ half *)(input + scale_offset));
         indices_gm.SetGlobalBuffer((__gm__ int32_t *)indices);
         output_gm.SetGlobalBuffer((__gm__ float *)output);
 
-        pipe.InitBuffer(input_queue, BUFFER_NUM, QK4_0 * sizeof(uint4b_t));
+        pipe.InitBuffer(input_queue, BUFFER_NUM, QK4_0 * sizeof(int4b_t));
         pipe.InitBuffer(cast_queue, BUFFER_NUM, QK4_0 * sizeof(half));
         pipe.InitBuffer(output_queue, BUFFER_NUM, QK4_0 * sizeof(float));
     }
 
     __aicore__ inline void copy_in(uint32_t offset) {
-        LocalTensor<uint4b_t> input_local = input_queue.AllocTensor<uint4b_t>();
+        LocalTensor<int4b_t> input_local = input_queue.AllocTensor<int4b_t>();
         DataCopy(input_local, input_gm[offset], QK4_0);
         input_queue.EnQue(input_local);
     }
@@ -107,7 +104,7 @@ class GET_ROW_Q4_0 {
                                       group * QK4_0;
 
         copy_in(input_offset);
-        LocalTensor<uint4b_t> input_local = input_queue.DeQue<uint4b_t>();
+        LocalTensor<int4b_t> input_local = input_queue.DeQue<int4b_t>();
         LocalTensor<half> cast_local = cast_queue.AllocTensor<half>();
         LocalTensor<float> output_local = output_queue.AllocTensor<float>();
 
@@ -115,11 +112,9 @@ class GET_ROW_Q4_0 {
         Cast(cast_local, input_local, RoundMode::CAST_NONE, QK4_0);
         Cast(output_local, cast_local, RoundMode::CAST_NONE, QK4_0);
 
-        Adds(output_local, output_local, (float)-8, QK4_0);
         // Only mul need compile by group.
         half scale = scale_gm.GetValue(scale_offset);
 
-        PRINTF("%f\n", (float)scale);
         Muls(output_local, output_local, (float)scale, QK4_0);
 
         input_queue.FreeTensor(input_local);
@@ -156,7 +151,7 @@ class GET_ROW_Q4_0 {
     int64_t group_size_in_row;
 
     TPipe pipe;
-    GlobalTensor<uint4b_t> input_gm;
+    GlobalTensor<int4b_t> input_gm;
     GlobalTensor<half> scale_gm;
     GlobalTensor<int32_t> indices_gm;
     GlobalTensor<float> output_gm;

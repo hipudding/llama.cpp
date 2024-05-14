@@ -24,4 +24,4 @@ ascendc_library(ascendc_kernels STATIC
     ${SRC_FILES}
 )
 
-ascendc_compile_definitions(ascendc_kernels PRIVATE -DASCENDC_DUMP)
+#ascendc_compile_definitions(ascendc_kernels PRIVATE -DASCENDC_DUMP)
