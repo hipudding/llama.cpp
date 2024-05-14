@@ -1611,9 +1611,18 @@ void ggml_cann_get_rows(ggml_backend_cann_context& ctx, ggml_tensor* dst) {
     ggml_tensor* src1 = dst->src[1];
 
     switch (src0->type) {
+        case GGML_TYPE_F32:
+            aclrtlaunch_ascendc_get_row_f32(
+                1, ctx.stream(), src0->data, src1->data, dst->data,
+                ((ggml_tensor*)src0->extra)->ne,
+                ((ggml_tensor*)src0->extra)->nb,
+                ((ggml_tensor*)src1->extra)->ne,
+                ((ggml_tensor*)src1->extra)->nb, ((ggml_tensor*)dst->extra)->ne,
+                ((ggml_tensor*)dst->extra)->nb);
+            break;
         case GGML_TYPE_Q4_0:
             aclrtlaunch_ascendc_get_row_q4_0(
-                1, ctx.stream(), src0->data, src1->data, dst->data,
+                24, ctx.stream(), src0->data, src1->data, dst->data,
                 ((ggml_tensor*)src0->extra)->ne,
                 ((ggml_tensor*)src1->extra)->ne,
                 ((ggml_tensor*)src1->extra)->nb, ((ggml_tensor*)dst->extra)->ne,

@@ -488,7 +488,15 @@ GGML_CALL static size_t ggml_backend_cann_buffer_type_get_alloc_size(
     size_t size = ggml_nbytes(tensor);
     int64_t ne0 = tensor->ne[0];
 
+    // last line must bigger than 32, because every single op deal at
+    // least 32 bytes.
+    // TODO: quantized type?
+    // int64_t line_size = ne0 * ggml_element_size(tensor);
+    // int64_t line_size_align_32 = (line_size + 31) & ~31;
+    // size += (line_size_align_32 - line_size);
+
     // TODO: not support quantized yet.
+    // TODO: consider un-continue tensor.
     if (ggml_is_quantized(tensor->type)) {
         if (ne0 % MATRIX_ROW_PADDING != 0) {
             size += ggml_row_size(
@@ -925,6 +933,7 @@ GGML_CALL static bool ggml_backend_cann_supports_op(ggml_backend_t backend,
         // embedding
         case GGML_OP_GET_ROWS: {
             switch (op->src[0]->type) {
+                case GGML_TYPE_F32:
                 case GGML_TYPE_Q4_0:
                 case GGML_TYPE_Q8_0:
                     return true;
