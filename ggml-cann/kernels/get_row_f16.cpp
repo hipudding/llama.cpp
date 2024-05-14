@@ -5,9 +5,9 @@ using namespace AscendC;
 
 #define BUFFER_NUM 2
 
-class GET_ROW_F32 {
+class GET_ROW_F16 {
    public:
-    __aicore__ inline GET_ROW_F32() {}
+    __aicore__ inline GET_ROW_F16() {}
     __aicore__ inline void init(GM_ADDR input, GM_ADDR indices, GM_ADDR output,
                                 int64_t *input_ne_ub, size_t *input_nb_ub,
                                 int64_t *indices_ne_ub, size_t *indices_nb_ub,
@@ -40,29 +40,31 @@ class GET_ROW_F32 {
             ir = dr * op_block_idx + tails;
         }
 
-        input_gm.SetGlobalBuffer((__gm__ float *)input);
+        input_gm.SetGlobalBuffer((__gm__ half *)input);
         indices_gm.SetGlobalBuffer((__gm__ int32_t *)indices);
         output_gm.SetGlobalBuffer((__gm__ float *)output);
 
-        uint64_t local_buffer_size = ((input_ne[0] * sizeof(float) + 31) & ~31);
-        local_buffer_elems = local_buffer_size / sizeof(float);
+        uint64_t input_local_buffer_size = ((input_ne[0] * sizeof(half) + 31) & ~31);
+        uint64_t output_local_buffer_size = ((input_ne[0] * sizeof(float) + 31) & ~31);
+
+        local_buffer_elems = input_local_buffer_size / sizeof(half);
 
         // TODO, consider long row that can't put in UB.
         // All data should asign to 32. It's ok because all data is align to 32.
-        pipe.InitBuffer(input_queue, BUFFER_NUM, local_buffer_size);
-        pipe.InitBuffer(output_queue, BUFFER_NUM, local_buffer_size);
+        pipe.InitBuffer(input_queue, BUFFER_NUM, input_local_buffer_size);
+        pipe.InitBuffer(output_queue, BUFFER_NUM, output_local_buffer_size);
     }
 
     __aicore__ inline void copy_in(uint32_t offset, size_t len) {
-        LocalTensor<float> input_local = input_queue.AllocTensor<float>();
+        LocalTensor<half> input_local = input_queue.AllocTensor<half>();
         size_t tail = len % 32; 
         len = len & ~31;
         DataCopy(input_local, input_gm[offset], len);
         if(tail != 0) {
             DataCopyExtParams dataCopyParams;
             dataCopyParams.blockCount = 1;
-            dataCopyParams.blockLen = tail * sizeof(float);
-            DataCopyPadExtParams<float> padParams;
+            dataCopyParams.blockLen = tail * sizeof(half);
+            DataCopyPadExtParams<half> padParams;
             DataCopyPad(input_local[len], input_gm[offset + len], dataCopyParams, padParams);
         }
         input_queue.EnQue(input_local);
@@ -105,10 +107,10 @@ class GET_ROW_F32 {
                                       indices_ne2_idx * output_stride[3];
 
         copy_in(input_offset, input_ne[0]);
-        LocalTensor<float> input_local = input_queue.DeQue<float>();
+        LocalTensor<half> input_local = input_queue.DeQue<half>();
         LocalTensor<float> output_local = output_queue.AllocTensor<float>();
         
-        DataCopy(output_local, input_local, local_buffer_elems);
+        Cast(output_local, input_local, RoundMode::CAST_NONE, local_buffer_elems);
         output_queue.EnQue(output_local);
         copy_out(output_offset, input_ne[0]);
 
@@ -137,7 +139,7 @@ class GET_ROW_F32 {
     int64_t dr;
 
     TPipe pipe;
-    GlobalTensor<float> input_gm;
+    GlobalTensor<half> input_gm;
     GlobalTensor<int32_t> indices_gm;
     GlobalTensor<float> output_gm;
     TQue<QuePosition::VECIN, BUFFER_NUM> input_queue;
@@ -153,7 +155,7 @@ __aicore__ inline void copy_to_ub(GM_ADDR gm, T *ub, size_t size) {
     }
 }
 
-extern "C" __global__ __aicore__ void ascendc_get_row_f32(
+extern "C" __global__ __aicore__ void ascendc_get_row_f16(
     GM_ADDR input_gm, GM_ADDR indices_gm, GM_ADDR output_gm,
     GM_ADDR input_ne_gm, GM_ADDR input_nb_gm, GM_ADDR indices_ne_gm,
     GM_ADDR indices_nb_gm, GM_ADDR output_ne_gm, GM_ADDR output_nb_gm) {
@@ -171,7 +173,7 @@ extern "C" __global__ __aicore__ void ascendc_get_row_f32(
     copy_to_ub(output_ne_gm, output_ne_ub, 32);
     copy_to_ub(output_nb_gm, output_nb_ub, 32);
 
-    GET_ROW_F32 op;
+    GET_ROW_F16 op;
     op.init(input_gm, indices_gm, output_gm, input_ne_ub, input_nb_ub,
             indices_ne_ub, indices_nb_ub, output_ne_ub, output_nb_ub);
     op.calculate();

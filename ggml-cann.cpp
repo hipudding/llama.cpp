@@ -934,6 +934,7 @@ GGML_CALL static bool ggml_backend_cann_supports_op(ggml_backend_t backend,
         case GGML_OP_GET_ROWS: {
             switch (op->src[0]->type) {
                 case GGML_TYPE_F32:
+                case GGML_TYPE_F16:
                 case GGML_TYPE_Q4_0:
                 case GGML_TYPE_Q8_0:
                     return true;

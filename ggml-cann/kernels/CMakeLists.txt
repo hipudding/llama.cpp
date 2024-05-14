@@ -4,6 +4,7 @@ endif()
 
 file(GLOB SRC_FILES
     get_row_f32.cpp
+    get_row_f16.cpp
     get_row_q4_0.cpp
     get_row_q8_0.cpp
 )
