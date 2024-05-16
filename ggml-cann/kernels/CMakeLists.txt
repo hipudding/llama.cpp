@@ -8,6 +8,7 @@ file(GLOB SRC_FILES
     get_row_q4_0.cpp
     get_row_q8_0.cpp
     quantize_q8_0.cpp
+    rope.cpp
 )
 
 string(TOLOWER ${SOC_TYPE} SOC_VERSION)
