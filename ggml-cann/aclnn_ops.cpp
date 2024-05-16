@@ -1477,20 +1477,9 @@ void ggml_cann_alibi(ggml_backend_cann_context& ctx, ggml_tensor* dst) {
 void ggml_cann_cpy(ggml_backend_cann_context& ctx, ggml_tensor* dst) {
     ggml_tensor* src = dst->src[0];
 
-    aclTensor* acl_src = create_acl_tensor(src);
-    aclTensor* acl_dst = create_acl_tensor(dst);
-
-    if (!ggml_is_quantized(dst->type)) {
-        cann_copy(ctx, dst, acl_src, acl_dst);
-    } else {
-        uint8_t* size = (uint8_t*)ctx.alloc_buffer(dst, sizeof(size_t));
-        size_t ne = ggml_nelements(src);
-        aclrtMemcpy(size, sizeof(size_t), &ne, sizeof(size_t),
-                    ACL_MEMCPY_HOST_TO_DEVICE);
-        size_t ne1;
-        aclrtMemcpy(&ne1, sizeof(size_t), size, sizeof(size_t),
-                    ACL_MEMCPY_DEVICE_TO_HOST);
-    }
+    aclrtlaunch_ascendc_quantize_q8_0(
+        24, ctx.stream(), src->data, dst->data, ((ggml_tensor*)src->extra)->ne,
+        ((ggml_tensor*)src->extra)->nb, ((ggml_tensor*)dst->extra)->ne);
 }
 
 void aclnn_inplace_add(ggml_backend_cann_context& ctx, aclTensor* acl_src,
@@ -1622,7 +1611,7 @@ void ggml_cann_get_rows(ggml_backend_cann_context& ctx, ggml_tensor* dst) {
             break;
         case GGML_TYPE_F16:
             aclrtlaunch_ascendc_get_row_f16(
-                1, ctx.stream(), src0->data, src1->data, dst->data,
+                24, ctx.stream(), src0->data, src1->data, dst->data,
                 ((ggml_tensor*)src0->extra)->ne,
                 ((ggml_tensor*)src0->extra)->nb,
                 ((ggml_tensor*)src1->extra)->ne,

@@ -198,8 +198,6 @@ GGML_CALL static void ggml_backend_cann_transform_back_q4_0(
 GGML_CALL static void ggml_backend_cann_transform_q8_0(ggml_tensor* tensor,
                                                        const void* src,
                                                        void* dst) {
-    GGML_ASSERT(tensor->op == GGML_OP_NONE);
-
     size_t n_bytes = ggml_nbytes(tensor);
     int64_t n_elems = ggml_nelements(tensor);
     int64_t groups = n_elems / QK8_0;
@@ -220,8 +218,6 @@ GGML_CALL static void ggml_backend_cann_transform_q8_0(ggml_tensor* tensor,
 
 GGML_CALL static void ggml_backend_cann_transform_back_q8_0(
     const ggml_tensor* tensor, const void* src, void* dst) {
-    GGML_ASSERT(tensor->op == GGML_OP_NONE);
-
     size_t n_bytes = ggml_nbytes(tensor);
     int64_t n_elems = ggml_nelements(tensor);
     int64_t groups = n_elems / QK8_0;
@@ -943,10 +939,12 @@ GGML_CALL static bool ggml_backend_cann_supports_op(ggml_backend_t backend,
             }
         } break;
         case GGML_OP_CPY: {
-            switch (op->src[0]->type) {
-                // case GGML_TYPE_Q4_0:
+            switch (op->type) {
                 case GGML_TYPE_Q8_0:
-                    return true;
+                    if (op->src[0]->type == GGML_TYPE_F32)
+                        return true;
+                    else
+                        return false;
                 default:
                     return false;
             }
