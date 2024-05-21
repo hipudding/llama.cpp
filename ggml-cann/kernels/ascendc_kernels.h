@@ -7,7 +7,7 @@
 #include "aclrtlaunch_ascendc_get_row_q4_0.h"
 
 #include "aclrtlaunch_ascendc_quantize_q8_0.h"
-#include "aclrtlaunch_ascendc_rope.h"
+#include "aclrtlaunch_ascendc_rope_init_cache.h"
 #include "rope.h"
 
 #endif  // ASCENDC_KERNELS_H
