@@ -32,8 +32,10 @@ class InitCache {
         broadcast_shape0[1] = 2;
         broadcast_shape1[0] = 1;
         broadcast_shape1[1] = head_dim;
-        broadcast_shape2[0] = param.position_ne[0];;
+        broadcast_shape2[0] = param.position_ne[0];
         broadcast_shape2[1] = head_dim;
+        broadcast_shape3[0] = 2;
+        broadcast_shape3[1] = count_;
         broadcast_size  = broadcast_shape2[0] * broadcast_shape2[1];
 
         position_shape[0] = param.position_ne[0];
@@ -41,86 +43,135 @@ class InitCache {
         position_size = position_shape[0] * position_shape[1];
 
         arange_shape[0] = count_;
-        arange_shape[1] = 1; 
+        arange_shape[1] = 1;
+        arange_shape1[0] = 1;
+        arange_shape1[1] = count_;
+
+        // other param
+        attn_factor = param.attn_factor;
+        freq_scale = param.freq_scale;
+        is_neox = param.is_neox;
+        is_glm = param.is_glm;
 
         position_gm.SetGlobalBuffer((__gm__ float_t*)position);
         output_sin_gm.SetGlobalBuffer((__gm__ float_t*)sin_output);
         output_cos_gm.SetGlobalBuffer((__gm__ float_t*)cos_output);
         
-        pipe.InitBuffer(power_queue, BUFFER_NUM, (sizeof(float_t) * count_ + 32 -1)/32*32);
-        pipe.InitBuffer(position_queue, BUFFER_NUM, (sizeof(float_t) *  param.position_ne[0] + 32 -1)/32*32);
-        pipe.InitBuffer(arange_queue, BUFFER_NUM, (sizeof(float_t) * count_ + 32 -1)/32*32);
-        pipe.InitBuffer(broadcast_tmp_buffer, (sizeof(float_t) * 2 * broadcast_size + 32 -1)/32*32);
-        pipe.InitBuffer(broadcast_power_buffer, (sizeof(float_t) * 2 * broadcast_size + 32 -1)/32*32);
-        pipe.InitBuffer(broadcast_power_buffer2, (sizeof(float_t) * 2 * broadcast_size + 32 -1)/32*32);
-        pipe.InitBuffer(broadcast_position_buffer, (sizeof(float_t) * 2 * broadcast_size + 32 -1)/32*32);
-        pipe.InitBuffer(theta_buffer, (sizeof(float_t) * broadcast_size + 32 -1)/32*32);
-        pipe.InitBuffer(sin_queue, BUFFER_NUM, (sizeof(float_t) * broadcast_size + 32 -1)/32*32);
-        pipe.InitBuffer(cos_queue, BUFFER_NUM, (sizeof(float_t) * broadcast_size + 32 -1)/32*32);
+        pipe.InitBuffer(power_queue, BUFFER_NUM, (sizeof(float_t) * count_ + 32 - 1) / 32 * 32);
+        pipe.InitBuffer(position_queue, BUFFER_NUM, (sizeof(float_t) * position_shape[0] + 32 - 1) / 32 * 32);
+        pipe.InitBuffer(arange_queue, BUFFER_NUM, (sizeof(float_t) * count_ + 32 - 1) / 32 * 32);
+        pipe.InitBuffer(sin_mul_mscale_queue, BUFFER_NUM, (sizeof(float_t) * broadcast_size + 32 - 1) / 32 * 32);
+        pipe.InitBuffer(cos_mul_mscale_queue, BUFFER_NUM, (sizeof(float_t) * broadcast_size + 32 - 1) / 32 * 32);
+        pipe.InitBuffer(position_mul_freq_buffer, (sizeof(float_t) * position_shape[0] + 32 - 1) / 32 * 32);
+        pipe.InitBuffer(broadcast_power_buffer, (sizeof(float_t) * 2 * count_ + 32 - 1) / 32 * 32);
+        pipe.InitBuffer(broadcast_power_buffer2, (sizeof(float_t) * broadcast_size + 32 - 1) / 32 * 32);
+        pipe.InitBuffer(broadcast_position_buffer, (sizeof(float_t) * broadcast_size + 32 - 1) / 32 * 32);
+        pipe.InitBuffer(theta_buffer, (sizeof(float_t) * broadcast_size + 32 - 1) / 32 * 32);
+        pipe.InitBuffer(sin_buffer, (sizeof(float_t) * broadcast_size + 32 - 1) / 32 * 32);
+        pipe.InitBuffer(cos_buffer, (sizeof(float_t) * broadcast_size + 32 - 1) / 32 * 32);
     }
 
     __aicore__ inline void copy_in() {
         LocalTensor<float_t> input_local = position_queue.AllocTensor<float_t>();
         int32_t BLOCK_NUM = 32 / sizeof(float_t);
-        DataCopy(input_local, position_gm, (position_size + BLOCK_NUM - 1) / BLOCK_NUM * BLOCK_NUM);
+        DataCopy(input_local, position_gm, (position_size + BLOCK_NUM - 1) 
+                                            / BLOCK_NUM * BLOCK_NUM);
         position_queue.EnQue(input_local);
     }
 
     __aicore__ inline void copy_out() {
-        LocalTensor<float_t> sin_local = sin_queue.DeQue<float_t>();
+        LocalTensor<float_t> sin_local = sin_mul_mscale_queue.DeQue<float_t>();
         int32_t BLOCK_NUM = 32 / sizeof(float_t);
-        DataCopy(output_sin_gm, sin_local, (broadcast_size + BLOCK_NUM - 1) / BLOCK_NUM * BLOCK_NUM);
+        DataCopy(output_sin_gm, sin_local, (broadcast_size + BLOCK_NUM - 1) 
+                                            / BLOCK_NUM * BLOCK_NUM);
 
-        LocalTensor<float_t> cos_local = cos_queue.DeQue<float_t>();
-        DataCopy(output_cos_gm, cos_local, (broadcast_size + BLOCK_NUM - 1) / BLOCK_NUM * BLOCK_NUM);
+        LocalTensor<float_t> cos_local = cos_mul_mscale_queue.DeQue<float_t>();
+        DataCopy(output_cos_gm, cos_local, (broadcast_size + BLOCK_NUM - 1) 
+                                           / BLOCK_NUM * BLOCK_NUM);
         
-        sin_queue.FreeTensor(sin_local);
-        cos_queue.FreeTensor(cos_local);
+        sin_mul_mscale_queue.FreeTensor(sin_local);
+        cos_mul_mscale_queue.FreeTensor(cos_local);
     }
 
     __aicore__ inline void calculate() {
         // arange    
         LocalTensor<float_t> arange_local = arange_queue.AllocTensor<float_t>();
-        ArithProgression<float_t>(arange_local, first_value_, diff_value_, count_);
+        ArithProgression<float_t>(arange_local, first_value_, diff_value_, 
+                                  count_);
         
         // pow
         LocalTensor<float_t> power_local = power_queue.AllocTensor<float_t>();
-        Power<float_t, false>(power_local, static_cast<float_t>(theta_scale), arange_local);
-
-        // broadcast1: arange [64, 1] -> [64, 2] -> [1, 128] -> [10, 128]
-        LocalTensor<float_t> power_brcast_local = broadcast_power_buffer.Get<float_t>();
-        BroadCast<float_t, 2, 1>(power_brcast_local, power_local, broadcast_shape0, arange_shape);
-        LocalTensor<float_t> power_brcast_local2 = broadcast_power_buffer2.Get<float_t>();
-        BroadCast<float_t, 2, 0>(power_brcast_local2, power_brcast_local, broadcast_shape2, broadcast_shape1);
-
-        // boradcast2: position [10, 1] -> [10, 128]
-        copy_in();
-        LocalTensor<float_t> position_brcast_local = broadcast_position_buffer.Get<float_t>();
-        LocalTensor<float_t> position_local = position_queue.DeQue<float_t>();
-        BroadCast<float_t, 2, 1>(position_brcast_local, position_local, broadcast_shape2, position_shape);
+        Power<float_t, false>(power_local, static_cast<float_t>(theta_scale), 
+                              arange_local);
         
-        // mul
+        LocalTensor<float_t> position_brcast_local = broadcast_position_buffer.Get<float_t>();
+        LocalTensor<float_t> power_brcast_local = broadcast_power_buffer.Get<float_t>();
+        LocalTensor<float_t> power_brcast_local2 = broadcast_power_buffer2.Get<float_t>();
+        if (!is_glm && !is_neox) {    
+            // broadcast: arange [64, 1] -> [64, 2] -> [1, 128] -> [10, 128]
+            BroadCast<float_t, 2, 1>(power_brcast_local, power_local, 
+                                     broadcast_shape0, arange_shape);
+            BroadCast<float_t, 2, 0>(power_brcast_local2, power_brcast_local, 
+                                     broadcast_shape2, broadcast_shape1);
+
+            // boradcast: position [10, 1] -> [10, 128] 
+            copy_in();
+            LocalTensor<float_t> position_local = position_queue.DeQue<float_t>();
+            BroadCast<float_t, 2, 1>(position_brcast_local, position_local, 
+                                     broadcast_shape2, position_shape);   
+            position_queue.FreeTensor(position_local);
+        }
+        else {
+            // broadcast: arange [1, 64] -> [2, 64] -> [1, 128] -> [10, 128]
+            BroadCast<float_t, 2, 0>(power_brcast_local, power_local, 
+                                     broadcast_shape3, arange_shape1);
+            BroadCast<float_t, 2, 0>(power_brcast_local2, power_brcast_local, 
+                                     broadcast_shape2, broadcast_shape1);
+
+            // position * freq_scale
+            copy_in();
+            LocalTensor<float_t> position_local = position_queue.DeQue<float_t>();
+            LocalTensor<float_t> position_mul_freq_local = position_mul_freq_buffer.Get<float_t>();
+            Muls(position_mul_freq_local, position_local, freq_scale, 
+                 position_shape[0]);
+
+            // boradcast: position [10, 1] -> [10, 128]
+            BroadCast<float_t, 2, 1>(position_brcast_local, 
+                                     position_mul_freq_local, 
+                                     broadcast_shape2, position_shape);
+            position_queue.FreeTensor(position_local);
+            position_mul_freq_buffer.FreeTensor(position_mul_freq_local);
+        }
+        
+        // theta
         LocalTensor<float_t> theta_local = theta_buffer.Get<float_t>(); 
-        Mul<float_t>(theta_local, position_brcast_local, power_brcast_local2, broadcast_size);
+        Mul<float_t>(theta_local, position_brcast_local, power_brcast_local2, 
+                     broadcast_size);
 
         // sin & cos
-        LocalTensor<float_t> sin_local = sin_queue.AllocTensor<float_t>(); 
+        // TODO: if ext_factor != 0
+        LocalTensor<float_t> sin_local = sin_buffer.Get<float_t>(); 
         Sin<float_t, false>(sin_local, theta_local);
+        LocalTensor<float_t> sin_mul_mscale_local = sin_mul_mscale_queue.AllocTensor<float_t>(); 
+        Muls(sin_mul_mscale_local, sin_local, attn_factor, broadcast_size);
 
-        LocalTensor<float_t> cos_local = cos_queue.AllocTensor<float_t>(); 
+        LocalTensor<float_t> cos_local = cos_buffer.Get<float_t>(); 
         Cos<float_t, false>(cos_local, theta_local);
+        LocalTensor<float_t> cos_mul_mscale_local = cos_mul_mscale_queue.AllocTensor<float_t>(); 
+        Muls(cos_mul_mscale_local, cos_local, attn_factor, broadcast_size);
 
         // release
         arange_queue.FreeTensor(arange_local);
         power_queue.FreeTensor(power_local);
         broadcast_power_buffer.FreeTensor(power_brcast_local);
-        position_queue.FreeTensor(position_local);
         broadcast_position_buffer.FreeTensor(position_brcast_local);
         theta_buffer.FreeTensor(theta_local);
+        sin_buffer.FreeTensor(sin_local);
+        cos_buffer.FreeTensor(cos_local);
         
         // output
-        sin_queue.EnQue<float_t>(sin_local);
-        cos_queue.EnQue<float_t>(cos_local);
+        sin_mul_mscale_queue.EnQue<float_t>(sin_mul_mscale_local);
+        cos_mul_mscale_queue.EnQue<float_t>(cos_mul_mscale_local);
         copy_out();
     }
 
@@ -131,13 +182,19 @@ class InitCache {
     float_t diff_value_;
     int32_t count_;
     float_t theta_scale;
+    float_t attn_factor;
+    float_t freq_scale;
+    bool is_neox;
+    bool is_glm;
 
     uint32_t broadcast_shape[2];
     uint32_t broadcast_shape0[2];
     uint32_t broadcast_shape1[2];
     uint32_t broadcast_shape2[2];
+    uint32_t broadcast_shape3[2];
     uint32_t position_shape[2];
     uint32_t arange_shape[2];
+    uint32_t arange_shape1[2];
     int64_t broadcast_size;
     int64_t position_size;
   
@@ -148,13 +205,15 @@ class InitCache {
     TQue<QuePosition::VECIN, BUFFER_NUM> arange_queue;
     TQue<QuePosition::VECIN, BUFFER_NUM> power_queue;
     TQue<QuePosition::VECIN, BUFFER_NUM> position_queue;
-    TQue<QuePosition::VECOUT, BUFFER_NUM> sin_queue;
-    TQue<QuePosition::VECOUT, BUFFER_NUM> cos_queue;
-    TBuf<QuePosition::VECCALC> broadcast_tmp_buffer;
+    TQue<QuePosition::VECOUT, BUFFER_NUM> sin_mul_mscale_queue;
+    TQue<QuePosition::VECOUT, BUFFER_NUM> cos_mul_mscale_queue;
+    TBuf<QuePosition::VECCALC> position_mul_freq_buffer;
     TBuf<QuePosition::VECCALC> broadcast_position_buffer;
     TBuf<QuePosition::VECCALC> broadcast_power_buffer;
     TBuf<QuePosition::VECCALC> broadcast_power_buffer2;
     TBuf<QuePosition::VECCALC> theta_buffer;
+    TBuf<QuePosition::VECCALC> sin_buffer;
+    TBuf<QuePosition::VECCALC> cos_buffer;
     
 };
 

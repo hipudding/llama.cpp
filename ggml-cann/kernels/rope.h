@@ -10,6 +10,8 @@ typedef struct {
     int n_orig_ctx;
     float theta_scale;
     float corr_dims[2];
+    bool is_neox;
+    bool is_glm;
 
 } rope_param;
 #pragma pack(pop)
