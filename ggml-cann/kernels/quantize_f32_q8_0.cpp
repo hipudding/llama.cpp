@@ -5,9 +5,9 @@ using namespace AscendC;
 #define BUFFER_NUM 2
 #define QK8_0 32
 
-class QUANTIZE_Q8_0 {
+class QUANTIZE_F32_Q8_0 {
    public:
-    __aicore__ inline QUANTIZE_Q8_0() {}
+    __aicore__ inline QUANTIZE_F32_Q8_0() {}
     __aicore__ inline void init(GM_ADDR input, GM_ADDR output,
                                 int64_t *input_ne_ub, size_t *input_nb_ub,
                                 int64_t *output_ne_ub) {
@@ -186,7 +186,7 @@ __aicore__ inline void copy_to_ub(GM_ADDR gm, T *ub, size_t size) {
     }
 }
 
-extern "C" __global__ __aicore__ void ascendc_quantize_q8_0(
+extern "C" __global__ __aicore__ void ascendc_quantize_f32_q8_0(
     GM_ADDR input_gm, GM_ADDR output_gm, GM_ADDR input_ne_gm,
     GM_ADDR input_nb_gm, GM_ADDR output_ne_gm) {
     int64_t input_ne_ub[4];
@@ -197,7 +197,7 @@ extern "C" __global__ __aicore__ void ascendc_quantize_q8_0(
     copy_to_ub(input_nb_gm, input_nb_ub, 32);
     copy_to_ub(output_ne_gm, output_ne_ub, 32);
 
-    QUANTIZE_Q8_0 op;
+    QUANTIZE_F32_Q8_0 op;
     op.init(input_gm, output_gm, input_ne_ub, input_nb_ub, output_ne_ub);
     op.calculate();
 }

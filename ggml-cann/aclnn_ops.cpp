@@ -1484,9 +1484,19 @@ void ggml_cann_alibi(ggml_backend_cann_context& ctx, ggml_tensor* dst) {
 void ggml_cann_cpy(ggml_backend_cann_context& ctx, ggml_tensor* dst) {
     ggml_tensor* src = dst->src[0];
 
-    aclrtlaunch_ascendc_quantize_q8_0(
-        24, ctx.stream(), src->data, dst->data, ((ggml_tensor*)src->extra)->ne,
-        ((ggml_tensor*)src->extra)->nb, ((ggml_tensor*)dst->extra)->ne);
+    if (src->type == GGML_TYPE_F32) {
+        aclrtlaunch_ascendc_quantize_f32_q8_0(
+            24, ctx.stream(), src->data, dst->data, ((ggml_tensor*)src->extra)->ne,
+            ((ggml_tensor*)src->extra)->nb, ((ggml_tensor*)dst->extra)->ne);
+    }
+    else if (src->type == GGML_TYPE_F16) {
+        aclrtlaunch_ascendc_quantize_f16_q8_0(
+            24, ctx.stream(), src->data, dst->data, ((ggml_tensor*)src->extra)->ne,
+            ((ggml_tensor*)src->extra)->nb, ((ggml_tensor*)dst->extra)->ne);
+    }
+    else {
+        GGML_ASSERT(false);
+    }
 }
 
 void aclnn_inplace_add(ggml_backend_cann_context& ctx, aclTensor* acl_src,

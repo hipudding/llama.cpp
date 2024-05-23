@@ -943,10 +943,7 @@ GGML_CALL static bool ggml_backend_cann_supports_op(ggml_backend_t backend,
         case GGML_OP_CPY: {
             switch (op->type) {
                 case GGML_TYPE_Q8_0:
-                    if (op->src[0]->type == GGML_TYPE_F32)
-                        return true;
-                    else
-                        return false;
+                    return true;
                 default:
                     return false;
             }

@@ -7,7 +7,8 @@ file(GLOB SRC_FILES
     get_row_f16.cpp
     get_row_q4_0.cpp
     get_row_q8_0.cpp
-    quantize_q8_0.cpp
+    quantize_f32_q8_0.cpp
+    quantize_f16_q8_0.cpp
     rope_init_cache.cpp
 )
 
