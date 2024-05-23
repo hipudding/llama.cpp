@@ -51,14 +51,15 @@ class QUANTIZE_Q8_0 {
 
         input_gm.SetGlobalBuffer((__gm__ float *)input);
         output_gm.SetGlobalBuffer((__gm__ int8_t *)output);
-        scale_gm.SetGlobalBuffer((__gm__ half *)(output + output_size));
+        scale_gm.SetGlobalBuffer((__gm__ half *)(output + output_size + ir * group_size_in_row * sizeof(half)));
 
         pipe.InitBuffer(input_queue, BUFFER_NUM, QK8_0 * sizeof(float));
         pipe.InitBuffer(output_queue, BUFFER_NUM, QK8_0 * sizeof(int8_t));
-        pipe.InitBuffer(work_queue, BUFFER_NUM, 32);
-        pipe.InitBuffer(max_queue, BUFFER_NUM, 32);
-        pipe.InitBuffer(abs_queue, BUFFER_NUM, QK8_0 * sizeof(float));
-        pipe.InitBuffer(cast_queue, BUFFER_NUM, QK8_0 * sizeof(half));
+        pipe.InitBuffer(work_queue, 1, 32);
+        pipe.InitBuffer(max_queue, 1, 32);
+        pipe.InitBuffer(abs_queue, 1, QK8_0 * sizeof(float));
+        pipe.InitBuffer(cast_queue, 1, QK8_0 * sizeof(half));
+        pipe.InitBuffer(scale_queue, 1, 32);
     }
 
     __aicore__ inline void copy_in(uint32_t offset) {
@@ -73,7 +74,7 @@ class QUANTIZE_Q8_0 {
         output_queue.FreeTensor(output_local);
     }
 
-    __aicore__ inline void calculate_group(int64_t row, int64_t group) {
+    __aicore__ inline half calculate_group(int64_t row, int64_t group) {
         const int64_t i3 = row / (input_ne[1] * input_ne[2]);
         const int64_t i2 = (row - i3 * input_ne[1] * input_ne[2]) / input_ne[1];
         const int64_t i1 =
@@ -87,10 +88,6 @@ class QUANTIZE_Q8_0 {
                                       i2 * output_stride[2] +
                                       i3 * output_stride[3] + QK8_0 * group;
 
-        const int64_t scale_offset = i1 * scale_stride[1] +
-                                     i2 * scale_stride[2] +
-                                     i3 * scale_stride[3] + group;
-
         copy_in(input_offset);
         LocalTensor<float> input_local = input_queue.DeQue<float>();
         LocalTensor<int8_t> output_local = output_queue.AllocTensor<int8_t>();
@@ -101,9 +98,9 @@ class QUANTIZE_Q8_0 {
 
         Abs(abs_local, input_local, QK8_0);
         ReduceMax(max_local, abs_local, work_local, QK8_0);
+        pipe_barrier(PIPE_ALL);
         float d = max_local.GetValue(0);
         d = d / ((1 << 7) - 1);
-
         if (d != 0) {
             Muls(input_local, input_local, 1.0f / d, QK8_0);
         }
@@ -111,9 +108,6 @@ class QUANTIZE_Q8_0 {
         Cast(input_local, input_local, RoundMode::CAST_ROUND, QK8_0);
         Cast(cast_local, input_local, RoundMode::CAST_ROUND, QK8_0);
         Cast(output_local, cast_local, RoundMode::CAST_ROUND, QK8_0);
-        
-        scale_gm.SetValue(scale_offset, (half)d);
-
         output_queue.EnQue(output_local);
         copy_out(output_offset);
 
@@ -122,13 +116,36 @@ class QUANTIZE_Q8_0 {
         abs_queue.FreeTensor(abs_local);
         max_queue.FreeTensor(max_local);
         cast_queue.FreeTensor(cast_local);
+
+        return (half)d;
     }
 
     __aicore__ inline void calculate() {
+        LocalTensor<half> scale_local = scale_queue.AllocTensor<half>();
+        uint32_t scale_local_offset = 0;
+        uint32_t scale_global_offset = 0;
         for (int64_t i = ir; i < ir + dr; i++) {
             for (int64_t j = 0; j < group_size_in_row; j++) {
-                calculate_group(i, j);
+                half scale = calculate_group(i, j);
+                scale_local.SetValue(scale_local_offset++, scale);
+                if (scale_local_offset == 16) {
+                    scale_local_offset = 0;
+                    // TODO: OPTIMIZE ME
+                    pipe_barrier(PIPE_ALL);
+                    DataCopy(scale_gm[scale_global_offset], scale_local, 16);
+                    pipe_barrier(PIPE_ALL);
+                    scale_global_offset += 16;
+                }
             }
+        }
+
+        if (scale_local_offset != 0) {
+            pipe_barrier(PIPE_ALL);
+            DataCopyExtParams dataCopyParams;
+            dataCopyParams.blockCount = 1;
+            dataCopyParams.blockLen = scale_local_offset * sizeof(half);
+            DataCopyPad(scale_gm[scale_global_offset], scale_local, dataCopyParams);
+            pipe_barrier(PIPE_ALL);
         }
     }
 
@@ -157,6 +174,7 @@ class QUANTIZE_Q8_0 {
     TQue<QuePosition::VECOUT, 1> max_queue;
     TQue<QuePosition::VECIN, 1> abs_queue;
     TQue<QuePosition::VECIN, 1> cast_queue;
+    TQue<QuePosition::VECOUT, 1> scale_queue;
 };
 
 template <typename T>
