@@ -745,10 +745,36 @@ void ggml_cann_dup(ggml_backend_cann_context& ctx, ggml_tensor* dst) {
     aclTensor* acl_src = create_acl_tensor(src);
     aclTensor* acl_dst = create_acl_tensor(dst);
 
-    cann_copy(ctx, dst, acl_src, acl_dst);
+    if (ggml_is_contiguous(src) && ggml_is_contiguous(dst)) {
+        cann_copy(ctx, dst, acl_src, acl_dst);
+        ACL_CHECK(aclDestroyTensor(acl_src));
+        ACL_CHECK(aclDestroyTensor(acl_dst));
+        return;
+    }
 
-    ACL_CHECK(aclDestroyTensor(acl_src));
-    ACL_CHECK(aclDestroyTensor(acl_dst));
+    //TODO: fp16
+    //TODO: if (src0->type == dst->type && ne00 == ne0 && nb00 == type_size 
+    //          && nb0 == type_size) 
+    const size_t src_type_size = ggml_type_size(src->type);
+    if (ggml_is_contiguous(dst)) {
+        if (src->nb[0] == src_type_size) {
+            // src0 is contigous on first dimension, copy by rows
+            int64_t rows_num = ggml_nrows(src);
+            aclrtlaunch_ascendc_dup_by_rows(rows_num, ctx.stream(), src->data, 
+                                            dst->data, 
+                                            ((ggml_tensor*)src->extra)->ne, 
+                                            ((ggml_tensor*)src->extra)->nb,
+                                            ((ggml_tensor*)dst->extra)->ne,
+                                            ((ggml_tensor*)dst->extra)->nb);
+
+        }
+        else {
+            //TODO
+            GGML_ASSERT(false);
+        }
+        return;
+    }
+    //TODO: dst not continue
 }
 
 #ifdef __cplusplus

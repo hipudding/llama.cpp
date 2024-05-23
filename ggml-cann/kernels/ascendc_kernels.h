@@ -10,6 +10,7 @@
 #include "aclrtlaunch_ascendc_quantize_f16_q8_0.h"
 
 #include "aclrtlaunch_ascendc_rope_init_cache.h"
+#include "aclrtlaunch_ascendc_dup_by_rows.h"
 #include "rope.h"
 
 #endif  // ASCENDC_KERNELS_H

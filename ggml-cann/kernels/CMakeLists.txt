@@ -10,6 +10,7 @@ file(GLOB SRC_FILES
     quantize_f32_q8_0.cpp
     quantize_f16_q8_0.cpp
     rope_init_cache.cpp
+    dup.cpp
 )
 
 string(TOLOWER ${SOC_TYPE} SOC_VERSION)
