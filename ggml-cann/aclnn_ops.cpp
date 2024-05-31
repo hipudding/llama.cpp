@@ -1,6 +1,7 @@
 #include "aclnn_ops.h"
 
 #include <aclnnop/aclnn_avgpool2d.h>
+#include <aclnnop/aclnn_matmul.h>
 #include <aclnnop/aclnn_cast.h>
 #include <aclnnop/aclnn_constant_pad_nd.h>
 #include <aclnnop/aclnn_copy.h>
@@ -14,6 +15,7 @@
 #include <aclnnop/aclnn_pow_tensor_tensor.h>
 #include <aclnnop/aclnn_reduce_sum.h>
 #include <aclnnop/aclnn_repeat.h>
+#include <aclnnop/aclnn_repeat_interleave.h>
 #include <aclnnop/aclnn_roll.h>
 #include <aclnnop/aclnn_sin.h>
 #include <aclnnop/aclnn_softmax.h>
@@ -1682,6 +1684,150 @@ void ggml_cann_get_rows(ggml_backend_cann_context& ctx, ggml_tensor* dst) {
     }
 }
 
+void aclnn_repeat_interleave(ggml_backend_cann_context& ctx, aclTensor* acl_src,
+                             aclTensor* acl_dst, int64_t dim, int64_t repeats, 
+                             int64_t output_size, ggml_tensor* bind_tensor) {
+
+    uint64_t workspaceSize = 0;
+    aclOpExecutor* executor;
+    void* workspaceAddr = nullptr;
+
+    ACL_CHECK(aclnnRepeatInterleaveIntWithDimGetWorkspaceSize(acl_src, repeats, dim, output_size, acl_dst,
+                                              &workspaceSize, &executor));
+    if (workspaceSize > 0) {
+        workspaceAddr = ctx.alloc_buffer(bind_tensor, workspaceSize);
+    }
+
+    aclrtStream main_stream = ctx.stream();
+    ACL_CHECK(
+        aclnnRepeatInterleaveIntWithDim(workspaceAddr, workspaceSize, executor, main_stream));
+
+}
+
+void aclnn_mul_mat(ggml_backend_cann_context& ctx, aclTensor* acl_input,
+                             aclTensor* acl_weight, aclTensor* acl_dst, 
+                             ggml_tensor* bind_tensor) {
+     int8_t cube_math_type = 1;
+
+    uint64_t workspaceSize = 0;
+    aclOpExecutor* executor;
+    void* workspaceAddr = nullptr;
+
+    ACL_CHECK(aclnnMatmulGetWorkspaceSize(acl_input, acl_weight, acl_dst,
+                                               cube_math_type, &workspaceSize, 
+                                               &executor));
+    if (workspaceSize > 0) {
+        workspaceAddr = ctx.alloc_buffer(bind_tensor, workspaceSize);
+    }
+
+    aclrtStream main_stream = ctx.stream();
+    ACL_CHECK(aclnnMatmul(workspaceAddr, workspaceSize, executor, 
+                               main_stream));
+}
+
+void ggml_cann_mul_mat_fp(ggml_backend_cann_context& ctx, ggml_tensor* dst) {
+    ggml_tensor* src0 = dst->src[0];  // weight
+    ggml_tensor* src1 = dst->src[1];  // input
+
+    // weight need repeat
+    int repeat_dim2 = 1;
+    if (src0->ne[2] != src1->ne[2] && src0->ne[2] !=1) {
+        repeat_dim2 = src1->ne[2] / src0->ne[2];    
+    }
+    int repeat_dim3 = 1;
+    if (src0->ne[3] != src1->ne[3] && src0->ne[3] !=1) {
+        repeat_dim3 = src1->ne[3] / src0->ne[3];    
+    }
+
+    int64_t weight_repeat_ne[] = {src0->ne[0], src0->ne[1], 
+                                  src0->ne[2]*repeat_dim2, 
+                                  src0->ne[3]*repeat_dim3};
+    size_t weight_repeat_nb[GGML_MAX_DIMS];
+    weight_repeat_nb[0] = src0->nb[0];
+    for (int i = 1; i < GGML_MAX_DIMS; i++) {
+        weight_repeat_nb[i] = weight_repeat_nb[i - 1] * weight_repeat_ne[i - 1];
+    };
+    
+    void* acl_repeat_weight_buffer = nullptr;
+    aclTensor* acl_repeat_weight_tensor = nullptr;
+    aclTensor* acl_weight_tensor =create_acl_tensor(src0);
+    if (repeat_dim2 > 1) {
+        weight_repeat_ne[3] = src0->ne[3];
+        acl_repeat_weight_buffer = ctx.alloc_buffer(dst, 
+                                                    ggml_nelements(src0)
+                                                    *repeat_dim2
+                                                    *ggml_type_size(src0->type));
+        acl_repeat_weight_tensor = create_acl_tensor(acl_repeat_weight_buffer, 
+                                                     type_mapping(src0->type), 
+                                                     ggml_type_size(src0->type), 
+                                                     weight_repeat_ne, 
+                                                     weight_repeat_nb, 
+                                                     GGML_MAX_DIMS);
+
+        int64_t dim = 1;
+        int64_t output_size = src0->ne[2]*repeat_dim2;
+        aclnn_repeat_interleave(ctx, acl_weight_tensor, 
+                                acl_repeat_weight_tensor, dim, repeat_dim2, 
+                                output_size, dst);
+    }
+    if (repeat_dim3 > 1) {
+        weight_repeat_ne[3] = src0->ne[3]*repeat_dim3;
+        acl_repeat_weight_buffer = ctx.alloc_buffer(dst, 
+                                                    ggml_nelements(src0)
+                                                    *repeat_dim2*repeat_dim3
+                                                    *ggml_type_size(src0->type));
+        aclTensor* acl_repeat_weight_tensor2 = create_acl_tensor(
+                                                     acl_repeat_weight_buffer, 
+                                                     type_mapping(src0->type), 
+                                                     ggml_type_size(src0->type), 
+                                                     weight_repeat_ne, 
+                                                     weight_repeat_nb, 
+                                                     GGML_MAX_DIMS);
+        int64_t dim = 0;
+        int64_t output_size = src0->ne[3]*repeat_dim3;
+        if (acl_repeat_weight_tensor==nullptr) {
+            aclnn_repeat_interleave(ctx, acl_weight_tensor, 
+                                    acl_repeat_weight_tensor2, dim, repeat_dim3, 
+                                    output_size, dst);
+        }
+        else {
+            aclnn_repeat_interleave(ctx, acl_repeat_weight_tensor, 
+                                    acl_repeat_weight_tensor2, dim, repeat_dim3, 
+                                    output_size, dst);
+        }
+        ACL_CHECK(aclDestroyTensor(acl_repeat_weight_tensor));
+        ACL_CHECK(aclDestroyTensor(acl_repeat_weight_tensor2));
+    }
+    if (acl_repeat_weight_buffer==nullptr) {
+        acl_repeat_weight_buffer = src0->data; 
+    }
+
+     // transpose weight: [a,b,c,d] -> [a,b,d,c]
+    int64_t weight_ne[] = {weight_repeat_ne[1], weight_repeat_ne[0], 
+                           weight_repeat_ne[2], weight_repeat_ne[3]};
+    size_t weight_nb[] = {weight_repeat_nb[1], weight_repeat_nb[0], 
+                          weight_repeat_nb[2], weight_repeat_nb[3]};
+
+    aclTensor* acl_weight_transpose_tensor = create_acl_tensor(
+                                                     acl_repeat_weight_buffer, 
+                                                     type_mapping(src0->type), 
+                                                     ggml_type_size(src0->type), 
+                                                     weight_ne, 
+                                                     weight_nb, 
+                                                     GGML_MAX_DIMS);
+    
+    // mul_mat
+    aclTensor* acl_input_tensor = create_acl_tensor(src1);
+    aclTensor* acl_dst = create_acl_tensor(dst);
+    aclnn_mul_mat(ctx, acl_input_tensor, acl_weight_transpose_tensor, acl_dst, 
+                  dst);
+
+    ACL_CHECK(aclDestroyTensor(acl_weight_tensor));
+    ACL_CHECK(aclDestroyTensor(acl_weight_transpose_tensor));
+    ACL_CHECK(aclDestroyTensor(acl_input_tensor));
+    ACL_CHECK(aclDestroyTensor(acl_dst));    
+}
+
 void ggml_cann_mul_mat_q8_0(ggml_backend_cann_context& ctx, ggml_tensor* dst) {
     ggml_tensor* src0 = dst->src[0];  // weight
     ggml_tensor* src1 = dst->src[1];  // input
@@ -1806,12 +1952,10 @@ void ggml_cann_mul_mat_q8_0(ggml_backend_cann_context& ctx, ggml_tensor* dst) {
 void ggml_cann_mul_mat(ggml_backend_cann_context& ctx, ggml_tensor* dst) {
     const enum ggml_type type = dst->src[0]->type;
     switch (type) {
-        // case GGML_TYPE_F32:
-        //     ggml_cann_mul_mat_fp16(ctx, dst);
-        //     break;
-        // case GGML_TYPE_F16:
-        //     ggml_cann_mul_mat_fp32(ctx, dst);
-        //     break;
+        case GGML_TYPE_F32:
+        case GGML_TYPE_F16:
+            ggml_cann_mul_mat_fp(ctx, dst);
+            break;
         // case GGML_TYPE_Q4_0:
         //     ggml_cann_mul_mat_q4_0(ctx, dst);
         //     break;
