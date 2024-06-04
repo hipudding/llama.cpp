@@ -745,38 +745,167 @@ void ggml_cann_dup(ggml_backend_cann_context& ctx, ggml_tensor* dst) {
     ggml_tensor* src = dst->src[0];
 
     aclTensor* acl_src = create_acl_tensor(src);
-    aclTensor* acl_dst = create_acl_tensor(dst);
-
-    if (ggml_is_contiguous(src) && ggml_is_contiguous(dst)) {
-        cann_copy(ctx, dst, acl_src, acl_dst);
-        ACL_CHECK(aclDestroyTensor(acl_src));
-        ACL_CHECK(aclDestroyTensor(acl_dst));
-        return;
+    aclTensor* acl_dst = create_acl_tensor(dst);    
+    
+    // param
+    dup_param param;
+    for (int i=0; i<4; i++) {
+        param.src_ne[i] = src->ne[i];
+        param.src_nb[i] = src->nb[i];
+        param.dst_ne[i] = dst->ne[i];
+        param.dst_nb[i] = dst->nb[i];
     }
 
-    //TODO: fp16
-    //TODO: if (src0->type == dst->type && ne00 == ne0 && nb00 == type_size 
-    //          && nb0 == type_size) 
-    const size_t src_type_size = ggml_type_size(src->type);
-    if (ggml_is_contiguous(dst)) {
-        if (src->nb[0] == src_type_size) {
-            // src0 is contigous on first dimension, copy by rows
-            int64_t rows_num = ggml_nrows(src);
-            aclrtlaunch_ascendc_dup_by_rows(rows_num, ctx.stream(), src->data, 
-                                            dst->data, 
-                                            ((ggml_tensor*)src->extra)->ne, 
-                                            ((ggml_tensor*)src->extra)->nb,
-                                            ((ggml_tensor*)dst->extra)->ne,
-                                            ((ggml_tensor*)dst->extra)->nb);
-
+    // TODO: simplefify
+    if (src->type==GGML_TYPE_F16) {
+        if (dst->type==GGML_TYPE_Q8_0) {
+            aclrtlaunch_ascendc_quantize_f16_q8_0(
+            24, ctx.stream(), src->data, dst->data, ((ggml_tensor*)src->extra)->ne,
+            ((ggml_tensor*)src->extra)->nb, ((ggml_tensor*)dst->extra)->ne);
+            return;
         }
-        else {
-            //TODO
+        if (dst->type==GGML_TYPE_F16) {
+            if (ggml_are_same_shape(src, dst)) {
+                cann_copy(ctx, dst, acl_src, acl_dst);
+                ACL_CHECK(aclDestroyTensor(acl_src));
+                ACL_CHECK(aclDestroyTensor(acl_dst));
+                return;
+            }
+            if (ggml_is_contiguous(dst)) {
+                const size_t src_type_size = ggml_type_size(src->type);
+                if (src->nb[0] == src_type_size) {
+                    // src0 is contigous on first dimension, copy by rows
+                    int64_t rows_num = ggml_nrows(src);
+                    
+                    // param copy
+                    void *param_buffer;
+                    ACL_CHECK(aclrtMalloc(&param_buffer, sizeof(dup_param), 
+                                        ACL_MEM_MALLOC_HUGE_FIRST));
+
+                    ACL_CHECK(aclrtMemcpy(param_buffer, sizeof(dup_param), &param, 
+                                        sizeof(dup_param), ACL_MEMCPY_HOST_TO_DEVICE));
+                    aclrtlaunch_ascendc_dup_by_rows_fp16(rows_num, ctx.stream(), src->data, 
+                                                    dst->data, 
+                                                    param_buffer);
+                    return;
+                }
+                GGML_ASSERT(false);
+            }
             GGML_ASSERT(false);
         }
-        return;
+        if (dst->type==GGML_TYPE_F32) {
+            // if (ggml_is_contiguous(src) && ggml_is_contiguous(dst)) {
+            if (ggml_are_same_shape(src, dst)) {
+                cann_copy(ctx, dst, acl_src, acl_dst);
+                ACL_CHECK(aclDestroyTensor(acl_src));
+                ACL_CHECK(aclDestroyTensor(acl_dst));
+                return;
+            }
+            if (ggml_is_contiguous(dst)) {
+                const size_t src_type_size = ggml_type_size(src->type);
+                if (src->nb[0] == src_type_size) {
+                    // src0 is contigous on first dimension, copy by rows
+                    int64_t rows_num = ggml_nrows(src);
+                    // param copy
+                    void *param_buffer;
+                    ACL_CHECK(aclrtMalloc(&param_buffer, sizeof(dup_param), 
+                                        ACL_MEM_MALLOC_HUGE_FIRST));
+
+                    ACL_CHECK(aclrtMemcpy(param_buffer, sizeof(dup_param), &param, 
+                                        sizeof(dup_param), ACL_MEMCPY_HOST_TO_DEVICE));
+                    aclrtlaunch_ascendc_dup_by_rows_fp16_to_fp32(rows_num, ctx.stream(), src->data, 
+                                                    dst->data, 
+                                                    param_buffer);
+                    return;
+                }
+                GGML_ASSERT(false);
+            }
+            GGML_ASSERT(false);
+        }
+        // TODO
+        GGML_ASSERT(false);
     }
-    //TODO: dst not continue
+    else if (src->type==GGML_TYPE_F32) {
+        //TODO: if (src0->type == dst->type && ne00 == ne0 && nb00 == type_size 
+        //          && nb0 == type_size)
+        if (dst->type==GGML_TYPE_Q8_0) {
+            aclrtlaunch_ascendc_quantize_f32_q8_0(
+            24, ctx.stream(), src->data, dst->data, ((ggml_tensor*)src->extra)->ne,
+            ((ggml_tensor*)src->extra)->nb, ((ggml_tensor*)dst->extra)->ne);
+            return;
+        } 
+        if (dst->type==GGML_TYPE_F32) {
+            if (ggml_are_same_shape(src, dst)) {
+                cann_copy(ctx, dst, acl_src, acl_dst);
+                ACL_CHECK(aclDestroyTensor(acl_src));
+                ACL_CHECK(aclDestroyTensor(acl_dst));
+                return;
+            }
+            if (ggml_is_contiguous(dst)) {
+                const size_t src_type_size = ggml_type_size(src->type);
+                if (src->nb[0] == src_type_size) {
+                    // src0 is contigous on first dimension, copy by rows
+                    int64_t rows_num = ggml_nrows(src);
+                    // param copy
+                    void *param_buffer;
+                    ACL_CHECK(aclrtMalloc(&param_buffer, sizeof(dup_param), 
+                                        ACL_MEM_MALLOC_HUGE_FIRST));
+
+                    ACL_CHECK(aclrtMemcpy(param_buffer, sizeof(dup_param), &param, 
+                                        sizeof(dup_param), ACL_MEMCPY_HOST_TO_DEVICE));
+                    aclrtlaunch_ascendc_dup_by_rows_fp32(rows_num, ctx.stream(), src->data, 
+                                                    dst->data, 
+                                                    param_buffer);
+                    return;
+                }
+                GGML_ASSERT(false);
+            }
+            else {
+                //TODO: dst not continue
+                GGML_ASSERT(false);
+            }
+        }
+        if (dst->type==GGML_TYPE_F16) {
+
+            // if (ggml_is_contiguous(src) && ggml_is_contiguous(dst) && ggml_are_same_shape(src, dst)) {
+            if (ggml_are_same_shape(src, dst)) {
+                cann_copy(ctx, dst, acl_src, acl_dst);
+                ACL_CHECK(aclDestroyTensor(acl_src));
+                ACL_CHECK(aclDestroyTensor(acl_dst));
+                return;
+            }
+            if (ggml_is_contiguous(dst)) {
+                const size_t src_type_size = ggml_type_size(src->type);
+                if (src->nb[0] == src_type_size) {
+                    // src0 is contigous on first dimension, copy by rows
+                    int64_t rows_num = ggml_nrows(src);
+                    // param copy
+                    void *param_buffer;
+                    ACL_CHECK(aclrtMalloc(&param_buffer, sizeof(dup_param), 
+                                        ACL_MEM_MALLOC_HUGE_FIRST));
+
+                    ACL_CHECK(aclrtMemcpy(param_buffer, sizeof(dup_param), &param, 
+                                        sizeof(dup_param), ACL_MEMCPY_HOST_TO_DEVICE));
+                    aclrtlaunch_ascendc_dup_by_rows_fp32_to_fp16(rows_num, ctx.stream(), src->data, 
+                                                    dst->data, 
+                                                    param_buffer);
+                    return;
+                }
+                GGML_ASSERT(false);
+            }
+        }
+        // TODO
+        GGML_ASSERT(false);
+    }
+    else {
+        if (ggml_are_same_shape(src, dst)) {
+            cann_copy(ctx, dst, acl_src, acl_dst);
+            ACL_CHECK(aclDestroyTensor(acl_src));
+            ACL_CHECK(aclDestroyTensor(acl_dst));
+            return;
+        }
+        GGML_ASSERT(false);
+    }
 }
 
 #ifdef __cplusplus
@@ -1511,20 +1640,7 @@ void ggml_cann_alibi(ggml_backend_cann_context& ctx, ggml_tensor* dst) {
 
 void ggml_cann_cpy(ggml_backend_cann_context& ctx, ggml_tensor* dst) {
     ggml_tensor* src = dst->src[0];
-
-    if (src->type == GGML_TYPE_F32) {
-        aclrtlaunch_ascendc_quantize_f32_q8_0(
-            24, ctx.stream(), src->data, dst->data, ((ggml_tensor*)src->extra)->ne,
-            ((ggml_tensor*)src->extra)->nb, ((ggml_tensor*)dst->extra)->ne);
-    }
-    else if (src->type == GGML_TYPE_F16) {
-        aclrtlaunch_ascendc_quantize_f16_q8_0(
-            24, ctx.stream(), src->data, dst->data, ((ggml_tensor*)src->extra)->ne,
-            ((ggml_tensor*)src->extra)->nb, ((ggml_tensor*)dst->extra)->ne);
-    }
-    else {
-        GGML_ASSERT(false);
-    }
+    ggml_cann_dup(ctx, dst);
 }
 
 void aclnn_inplace_add(ggml_backend_cann_context& ctx, aclTensor* acl_src,
