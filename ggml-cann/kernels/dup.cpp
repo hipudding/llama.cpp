@@ -28,9 +28,10 @@ class DupByRows {
                 
         src_stride = param.src_nb[3] * idx_0 + param.src_nb[2] * idx_1
                      + param.src_nb[1] * idx_2;
-
-        dst_stride = param.dst_nb[3] * idx_0 + param.dst_nb[2] * idx_1
-                     + param.dst_nb[1] * idx_2;
+                     
+        dst_stride = (idx_0 * (param.src_ne[1] * param.src_ne[2]) + 
+                      idx_1 * param.src_ne[1] + 
+                      idx_2) * (param.src_ne[0] * sizeof(DST_T));
         
         src_gm.SetGlobalBuffer(reinterpret_cast<__gm__ SRC_T *>(src + src_stride));
         dst_gm.SetGlobalBuffer(reinterpret_cast<__gm__ DST_T *>(dst + dst_stride));

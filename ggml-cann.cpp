@@ -895,6 +895,9 @@ GGML_CALL static enum ggml_status ggml_backend_cann_graph_compute(
             fprintf(stderr, "%s: error: op not supported %s (%s)\n", __func__,
                     node->name, ggml_op_name(node->op));
         }
+        // if not synchronize, aclrtSynchronizeStream in 
+        // ggml_backend_cann_synchronize() will raise error.
+        ACL_CHECK(aclrtSynchronizeStream(cann_ctx->stream()));
         GGML_ASSERT(ok);
     }
 

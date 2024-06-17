@@ -24,6 +24,17 @@ aclDataType type_mapping(ggml_type type) {
     return ACL_DT_UNDEFINED;
 }
 
+bool nb3_is_valid(const ggml_tensor* tensor) {
+    // check tensor->nb[3] is contiguous by ne.
+    if (tensor->nb[3] == tensor->ne[0] * tensor->ne[1] * tensor->ne[2] 
+                         * ggml_element_size(tensor)) {
+        return true;
+    }
+    else {
+        return false;
+    }
+}
+
 /**
  * Transform ggml_tensor to acl_tensor. Note that ggml_tensor dimension order
  * is reversed compared to acl_tensor.
@@ -51,27 +62,61 @@ aclTensor* create_acl_tensor(const ggml_tensor* tensor, int64_t* bcast_ne,
     // If tensor is bcasted, Up to GGML_MAX_DIMS additional dimensions will be
     // added.
     int64_t acl_ne[GGML_MAX_DIMS * 2], acl_stride[GGML_MAX_DIMS * 2];
+    int64_t acl_storage_ne[GGML_MAX_DIMS * 2];
     if (bcast_ne == nullptr) {
         for (int i = 0; i < GGML_MAX_DIMS; i++) {
             acl_ne[i] = tensor->ne[i];
             // The step size of acl is in elements.
             acl_stride[i] = tensor->nb[i] / ggml_element_size(tensor);
+            acl_storage_ne[i] = acl_ne[i];
+        }
+        if (!nb3_is_valid(tensor)) {
+            if (tensor->ne[GGML_MAX_DIMS-1] == 1) {
+                if (tensor->nb[2] == tensor->nb[0]*tensor->ne[0] &&
+                    tensor->nb[1] == tensor->nb[2]*tensor->ne[2]) {
+                    // nb[3] not valid, tensor is not contiguous by permuted to 
+                    // (0,2,1,3), still use tensor->ne. 
+                    // @see https://github.com/ggerganov/llama.cpp/issues/7930.
+                    for (int i = 0;  i < GGML_MAX_DIMS; i++) {
+                        acl_storage_ne[i] = acl_ne[i];
+                    }
+                }
+                else {
+                    // nb[3] is valid but tensor is not contiguous.
+                    // e.g. nb=(2,1024,121072,1048576), ne=(32,128,8,1) with 
+                    // fp16, 1024/2 not equal to 32.
+                    // acl_storage_ne should be decided by tensor->nb.
+                    for (int i = 0;  i < GGML_MAX_DIMS-1; i++) {
+                        acl_storage_ne[i] = std::max(static_cast<int64_t>(1), 
+                                            acl_stride[i+1] / acl_stride[i]);
+                    }
+                    acl_storage_ne[GGML_MAX_DIMS-1] = 
+                                            tensor->ne[GGML_MAX_DIMS-1];
+                }
+            }
+            else {
+                // not impl
+                GGML_ASSERT(false);
+            }
         }
     } else {
         // With bcast
         for (int i = 0; i < bcast_dims; i++) {
             acl_ne[i] = bcast_ne[i];
             acl_stride[i] = bcast_nb[i] / ggml_element_size(tensor);
+            acl_storage_ne[i] = acl_ne[i];
         }
     }
 
     int64_t dims = (bcast_dims == 0 ? GGML_MAX_DIMS : bcast_dims);
     std::reverse(acl_ne, acl_ne + dims);
     std::reverse(acl_stride, acl_stride + dims);
+    std::reverse(acl_storage_ne, acl_storage_ne + dims);
 
     aclTensor* acl_tensor = aclCreateTensor(
         acl_ne, dims, type_mapping(tensor->type), acl_stride,
-        offset / ggml_element_size(tensor), format, acl_ne, dims, deviceAddr);
+        offset / ggml_element_size(tensor), format, acl_storage_ne, dims, 
+        deviceAddr);
 
     return acl_tensor;
 }
@@ -90,8 +135,9 @@ aclTensor* create_acl_tensor(void* data_ptr, aclDataType dtype,
     std::reverse(tmp_ne, tmp_ne + dims);
     std::reverse(tmp_stride, tmp_stride + dims);
 
-    aclTensor* acl_tensor = aclCreateTensor(tmp_ne, dims, dtype, tmp_stride, offset / type_size,
-                                            format, tmp_ne, dims, data_ptr);
+    aclTensor* acl_tensor = aclCreateTensor(tmp_ne, dims, dtype, tmp_stride, 
+                                            offset / type_size, format, tmp_ne, 
+                                            dims, data_ptr);
 
     return acl_tensor;
 }
