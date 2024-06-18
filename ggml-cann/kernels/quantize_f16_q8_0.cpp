@@ -51,7 +51,9 @@ class QUANTIZE_F16_Q8_0 {
 
         input_gm.SetGlobalBuffer((__gm__ half *)input);
         output_gm.SetGlobalBuffer((__gm__ int8_t *)output);
-        scale_gm.SetGlobalBuffer((__gm__ half *)(output + output_size + ir * group_size_in_row * sizeof(half)));
+        scale_gm.SetGlobalBuffer((__gm__ half *)(output + output_size + ir *
+                                                 group_size_in_row * 
+                                                 sizeof(half)));
 
         pipe.InitBuffer(input_queue, BUFFER_NUM, QK8_0 * sizeof(half));
         pipe.InitBuffer(output_queue, BUFFER_NUM, QK8_0 * sizeof(int8_t));
@@ -145,7 +147,8 @@ class QUANTIZE_F16_Q8_0 {
             DataCopyExtParams dataCopyParams;
             dataCopyParams.blockCount = 1;
             dataCopyParams.blockLen = scale_local_offset * sizeof(half);
-            DataCopyPad(scale_gm[scale_global_offset], scale_local, dataCopyParams);
+            DataCopyPad(scale_gm[scale_global_offset], scale_local, 
+                        dataCopyParams);
             pipe_barrier(PIPE_ALL);
         }
     }

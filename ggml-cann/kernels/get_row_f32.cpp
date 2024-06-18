@@ -63,7 +63,8 @@ class GET_ROW_F32 {
             dataCopyParams.blockCount = 1;
             dataCopyParams.blockLen = tail * sizeof(float);
             DataCopyPadExtParams<float> padParams;
-            DataCopyPad(input_local[len], input_gm[offset + len], dataCopyParams, padParams);
+            DataCopyPad(input_local[len], input_gm[offset + len], 
+                        dataCopyParams, padParams);
         }
         input_queue.EnQue(input_local);
     }
@@ -77,7 +78,8 @@ class GET_ROW_F32 {
             DataCopyExtParams dataCopyParams;
             dataCopyParams.blockCount = 1;
             dataCopyParams.blockLen = tail * sizeof(float);
-            DataCopyPad(output_gm[offset + len], output_local[len], dataCopyParams);
+            DataCopyPad(output_gm[offset + len], output_local[len], 
+                        dataCopyParams);
         }
         output_queue.FreeTensor(output_local);
     }

@@ -34,6 +34,7 @@
 void aclnn_repeat(ggml_backend_cann_context& ctx, aclTensor* acl_src,
                   aclTensor* acl_dst, int64_t* repeat_array, 
                   ggml_tensor* bind_tensor) {
+    // repeat tensor along each dim with repeat_array
 
     aclIntArray* repeats = aclCreateIntArray(repeat_array, GGML_MAX_DIMS);
 
@@ -75,6 +76,8 @@ void ggml_cann_repeat(ggml_backend_cann_context& ctx, ggml_tensor* dst) {
 void aclnn_add(ggml_backend_cann_context& ctx, aclTensor* acl_src0,
                aclTensor* acl_src1, aclTensor* acl_dst,
                ggml_tensor* bind_tensor) {
+    // add: dst = acl_src0 + alpha*acl_src1
+
     aclScalar* alpha = nullptr;
     float alphaValue = 1.0f;
     alpha = aclCreateScalar(&alphaValue, aclDataType::ACL_FLOAT);
@@ -193,6 +196,8 @@ void ggml_cann_concat(ggml_backend_cann_context& ctx, ggml_tensor* dst) {
 void aclnn_arange(ggml_backend_cann_context& ctx, aclTensor* acl_dst,
                   float start, float stop, float step, int64_t n_elements,
                   ggml_tensor* bind_tensor) {
+    // arange: [start, end), out(i+1) = out(i) + step.
+
     int64_t steps = (int64_t)std::ceil((stop - start) / step);
     GGML_ASSERT(n_elements == steps);
 
@@ -241,6 +246,8 @@ void ggml_cann_sqr(ggml_backend_cann_context& ctx, ggml_tensor* dst) {
 }
 
 void ggml_cann_clamp(ggml_backend_cann_context& ctx, ggml_tensor* dst) {
+    // y = max(min(x, max_value), min_value).
+
     ggml_tensor* src = dst->src[0];
     GGML_ASSERT(src->type == GGML_TYPE_F32);
     GGML_ASSERT(dst->type == GGML_TYPE_F32);
@@ -276,6 +283,8 @@ void ggml_cann_clamp(ggml_backend_cann_context& ctx, ggml_tensor* dst) {
 }
 
 void ggml_cann_scale(ggml_backend_cann_context& ctx, ggml_tensor* dst) {
+    // acl_dst = acl_src * scale.
+
     ggml_tensor* src = dst->src[0];
 
     // scale factor
@@ -345,6 +354,8 @@ void ggml_cann_argsort(ggml_backend_cann_context& ctx, ggml_tensor* dst) {
 }
 
 void ggml_cann_norm(ggml_backend_cann_context& ctx, ggml_tensor* dst) {
+    // layer_norm for one layer.
+    
     ggml_tensor* src = dst->src[0];
 
     aclTensor* acl_src = create_acl_tensor(src);
@@ -422,6 +433,7 @@ void ggml_cann_group_norm(ggml_backend_cann_context& ctx, ggml_tensor* dst) {
 }
 
 void ggml_cann_acc(ggml_backend_cann_context& ctx, ggml_tensor* dst) {
+    // if inplace: dst = 
     ggml_tensor* src0 = dst->src[0];
     ggml_tensor* src1 = dst->src[1];
 
@@ -760,15 +772,16 @@ void ggml_cann_dup(ggml_backend_cann_context& ctx, ggml_tensor* dst) {
     if (src->type==GGML_TYPE_F16) {
         if (dst->type==GGML_TYPE_Q8_0) {
             aclrtlaunch_ascendc_quantize_f16_q8_0(
-            24, ctx.stream(), src->data, dst->data, ((ggml_tensor*)src->extra)->ne,
-            ((ggml_tensor*)src->extra)->nb, ((ggml_tensor*)dst->extra)->ne);
+                24, ctx.stream(), src->data, dst->data, 
+                ((ggml_tensor*)src->extra)->ne, ((ggml_tensor*)src->extra)->nb, 
+                ((ggml_tensor*)dst->extra)->ne);
             return;
         }
         if (dst->type==GGML_TYPE_F16) {
             if (ggml_are_same_shape(src, dst)) {
                 cann_copy(ctx, dst, acl_src, acl_dst);
-                ACL_CHECK(aclDestroyTensor(acl_src));
-                ACL_CHECK(aclDestroyTensor(acl_dst));
+                          ACL_CHECK(aclDestroyTensor(acl_src));
+                          ACL_CHECK(aclDestroyTensor(acl_dst));
                 return;
             }
             if (ggml_is_contiguous(dst)) {
@@ -782,11 +795,12 @@ void ggml_cann_dup(ggml_backend_cann_context& ctx, ggml_tensor* dst) {
                     ACL_CHECK(aclrtMalloc(&param_buffer, sizeof(dup_param), 
                                         ACL_MEM_MALLOC_HUGE_FIRST));
 
-                    ACL_CHECK(aclrtMemcpy(param_buffer, sizeof(dup_param), &param, 
-                                        sizeof(dup_param), ACL_MEMCPY_HOST_TO_DEVICE));
-                    aclrtlaunch_ascendc_dup_by_rows_fp16(rows_num, ctx.stream(), src->data, 
-                                                    dst->data, 
-                                                    param_buffer);
+                    ACL_CHECK(aclrtMemcpy(param_buffer, sizeof(dup_param), 
+                                          &param, sizeof(dup_param), 
+                                          ACL_MEMCPY_HOST_TO_DEVICE));
+                    aclrtlaunch_ascendc_dup_by_rows_fp16(rows_num, ctx.stream(), 
+                                                         src->data, dst->data, 
+                                                         param_buffer);
                     return;
                 }
                 GGML_ASSERT(false);
@@ -794,7 +808,6 @@ void ggml_cann_dup(ggml_backend_cann_context& ctx, ggml_tensor* dst) {
             GGML_ASSERT(false);
         }
         if (dst->type==GGML_TYPE_F32) {
-            // if (ggml_is_contiguous(src) && ggml_is_contiguous(dst)) {
             if (ggml_are_same_shape(src, dst)) {
                 cann_copy(ctx, dst, acl_src, acl_dst);
                 ACL_CHECK(aclDestroyTensor(acl_src));
@@ -809,13 +822,16 @@ void ggml_cann_dup(ggml_backend_cann_context& ctx, ggml_tensor* dst) {
                     // param copy
                     void *param_buffer;
                     ACL_CHECK(aclrtMalloc(&param_buffer, sizeof(dup_param), 
-                                        ACL_MEM_MALLOC_HUGE_FIRST));
+                                          ACL_MEM_MALLOC_HUGE_FIRST));
 
-                    ACL_CHECK(aclrtMemcpy(param_buffer, sizeof(dup_param), &param, 
-                                        sizeof(dup_param), ACL_MEMCPY_HOST_TO_DEVICE));
-                    aclrtlaunch_ascendc_dup_by_rows_fp16_to_fp32(rows_num, ctx.stream(), src->data, 
-                                                    dst->data, 
-                                                    param_buffer);
+                    ACL_CHECK(aclrtMemcpy(param_buffer, sizeof(dup_param), 
+                                          &param, sizeof(dup_param), 
+                                          ACL_MEMCPY_HOST_TO_DEVICE));
+                    aclrtlaunch_ascendc_dup_by_rows_fp16_to_fp32(rows_num, 
+                                                                 ctx.stream(), 
+                                                                 src->data, 
+                                                                 dst->data, 
+                                                                 param_buffer);
                     return;
                 }
                 GGML_ASSERT(false);
@@ -830,8 +846,9 @@ void ggml_cann_dup(ggml_backend_cann_context& ctx, ggml_tensor* dst) {
         //          && nb0 == type_size)
         if (dst->type==GGML_TYPE_Q8_0) {
             aclrtlaunch_ascendc_quantize_f32_q8_0(
-            24, ctx.stream(), src->data, dst->data, ((ggml_tensor*)src->extra)->ne,
-            ((ggml_tensor*)src->extra)->nb, ((ggml_tensor*)dst->extra)->ne);
+                24, ctx.stream(), src->data, dst->data, 
+                ((ggml_tensor*)src->extra)->ne, ((ggml_tensor*)src->extra)->nb, 
+                ((ggml_tensor*)dst->extra)->ne);
             return;
         } 
         if (dst->type==GGML_TYPE_F32) {
@@ -849,25 +866,24 @@ void ggml_cann_dup(ggml_backend_cann_context& ctx, ggml_tensor* dst) {
                     // param copy
                     void *param_buffer;
                     ACL_CHECK(aclrtMalloc(&param_buffer, sizeof(dup_param), 
-                                        ACL_MEM_MALLOC_HUGE_FIRST));
+                                          ACL_MEM_MALLOC_HUGE_FIRST));
 
-                    ACL_CHECK(aclrtMemcpy(param_buffer, sizeof(dup_param), &param, 
-                                        sizeof(dup_param), ACL_MEMCPY_HOST_TO_DEVICE));
-                    aclrtlaunch_ascendc_dup_by_rows_fp32(rows_num, ctx.stream(), src->data, 
-                                                    dst->data, 
-                                                    param_buffer);
+                    ACL_CHECK(aclrtMemcpy(param_buffer, sizeof(dup_param), 
+                                          &param, sizeof(dup_param), 
+                                          ACL_MEMCPY_HOST_TO_DEVICE));
+                    aclrtlaunch_ascendc_dup_by_rows_fp32(rows_num, ctx.stream(), 
+                                                         src->data, dst->data, 
+                                                         param_buffer);
                     return;
                 }
                 GGML_ASSERT(false);
             }
             else {
-                //TODO: dst not continue
+                //TODO: dst not contiguous
                 GGML_ASSERT(false);
             }
         }
         if (dst->type==GGML_TYPE_F16) {
-
-            // if (ggml_is_contiguous(src) && ggml_is_contiguous(dst) && ggml_are_same_shape(src, dst)) {
             if (ggml_are_same_shape(src, dst)) {
                 cann_copy(ctx, dst, acl_src, acl_dst);
                 ACL_CHECK(aclDestroyTensor(acl_src));
@@ -882,13 +898,16 @@ void ggml_cann_dup(ggml_backend_cann_context& ctx, ggml_tensor* dst) {
                     // param copy
                     void *param_buffer;
                     ACL_CHECK(aclrtMalloc(&param_buffer, sizeof(dup_param), 
-                                        ACL_MEM_MALLOC_HUGE_FIRST));
+                                          ACL_MEM_MALLOC_HUGE_FIRST));
 
-                    ACL_CHECK(aclrtMemcpy(param_buffer, sizeof(dup_param), &param, 
-                                        sizeof(dup_param), ACL_MEMCPY_HOST_TO_DEVICE));
-                    aclrtlaunch_ascendc_dup_by_rows_fp32_to_fp16(rows_num, ctx.stream(), src->data, 
-                                                    dst->data, 
-                                                    param_buffer);
+                    ACL_CHECK(aclrtMemcpy(param_buffer, sizeof(dup_param),
+                                          &param, sizeof(dup_param), 
+                                          ACL_MEMCPY_HOST_TO_DEVICE));
+                    aclrtlaunch_ascendc_dup_by_rows_fp32_to_fp16(rows_num, 
+                                                                 ctx.stream(), 
+                                                                 src->data, 
+                                                                 dst->data, 
+                                                                 param_buffer);
                     return;
                 }
                 GGML_ASSERT(false);
@@ -1808,30 +1827,34 @@ void aclnn_repeat_interleave(ggml_backend_cann_context& ctx, aclTensor* acl_src,
     aclOpExecutor* executor;
     void* workspaceAddr = nullptr;
 
-    ACL_CHECK(aclnnRepeatInterleaveIntWithDimGetWorkspaceSize(acl_src, repeats, dim, output_size, acl_dst,
-                                              &workspaceSize, &executor));
+    ACL_CHECK(aclnnRepeatInterleaveIntWithDimGetWorkspaceSize(acl_src, repeats, 
+                                                              dim, output_size, 
+                                                              acl_dst,
+                                                              &workspaceSize, 
+                                                              &executor));
     if (workspaceSize > 0) {
         workspaceAddr = ctx.alloc_buffer(bind_tensor, workspaceSize);
     }
 
     aclrtStream main_stream = ctx.stream();
     ACL_CHECK(
-        aclnnRepeatInterleaveIntWithDim(workspaceAddr, workspaceSize, executor, main_stream));
+        aclnnRepeatInterleaveIntWithDim(workspaceAddr, workspaceSize, executor, 
+                                        main_stream));
 
 }
 
 void aclnn_mul_mat(ggml_backend_cann_context& ctx, aclTensor* acl_input,
-                             aclTensor* acl_weight, aclTensor* acl_dst, 
-                             ggml_tensor* bind_tensor) {
-     int8_t cube_math_type = 1;
+                   aclTensor* acl_weight, aclTensor* acl_dst, 
+                   ggml_tensor* bind_tensor) {
+    int8_t cube_math_type = 1;
 
     uint64_t workspaceSize = 0;
     aclOpExecutor* executor;
     void* workspaceAddr = nullptr;
 
     ACL_CHECK(aclnnMatmulGetWorkspaceSize(acl_input, acl_weight, acl_dst,
-                                               cube_math_type, &workspaceSize, 
-                                               &executor));
+                                          cube_math_type, &workspaceSize, 
+                                          &executor));
     if (workspaceSize > 0) {
         workspaceAddr = ctx.alloc_buffer(bind_tensor, workspaceSize);
     }
@@ -2207,7 +2230,8 @@ void ggml_cann_rope(ggml_backend_cann_context& ctx, ggml_tensor* dst) {
     void* input_roll_buffer;
     aclTensor* acl_minus_one_tensor;
     if (is_glm) {
-        // TODO  
+        // TODO
+        GGML_ASSERT(false);  
     }
     else if (!is_neox) {
         // roll input: [q0,q1,q2,...] -> [q1,q0,q3,q2...]

@@ -12,6 +12,7 @@ class GET_ROW_F16 {
                                 int64_t *input_ne_ub, size_t *input_nb_ub,
                                 int64_t *indices_ne_ub, size_t *indices_nb_ub,
                                 int64_t *output_ne_ub, size_t *output_nb_ub) {
+        // TODO, use template for F16/f32
         int64_t op_block_num = GetBlockNum();
         int64_t op_block_idx = GetBlockIdx();
 
@@ -44,8 +45,10 @@ class GET_ROW_F16 {
         indices_gm.SetGlobalBuffer((__gm__ int32_t *)indices);
         output_gm.SetGlobalBuffer((__gm__ float *)output);
 
-        uint64_t input_local_buffer_size = ((input_ne[0] * sizeof(half) + 31) & ~31);
-        uint64_t output_local_buffer_size = ((input_ne[0] * sizeof(float) + 31) & ~31);
+        uint64_t input_local_buffer_size = ((input_ne[0] * sizeof(half) + 31)
+                                             & ~31);
+        uint64_t output_local_buffer_size = ((input_ne[0] * sizeof(float) + 31)
+                                              & ~31);
 
         local_buffer_elems = input_local_buffer_size / sizeof(half);
 
@@ -65,7 +68,8 @@ class GET_ROW_F16 {
             dataCopyParams.blockCount = 1;
             dataCopyParams.blockLen = tail * sizeof(half);
             DataCopyPadExtParams<half> padParams;
-            DataCopyPad(input_local[len], input_gm[offset + len], dataCopyParams, padParams);
+            DataCopyPad(input_local[len], input_gm[offset + len], 
+                        dataCopyParams, padParams);
         }
         input_queue.EnQue(input_local);
     }
@@ -79,7 +83,8 @@ class GET_ROW_F16 {
             DataCopyExtParams dataCopyParams;
             dataCopyParams.blockCount = 1;
             dataCopyParams.blockLen = tail * sizeof(float);
-            DataCopyPad(output_gm[offset + len], output_local[len], dataCopyParams);
+            DataCopyPad(output_gm[offset + len], output_local[len], 
+                        dataCopyParams);
         }
         output_queue.FreeTensor(output_local);
     }
@@ -110,7 +115,8 @@ class GET_ROW_F16 {
         LocalTensor<half> input_local = input_queue.DeQue<half>();
         LocalTensor<float> output_local = output_queue.AllocTensor<float>();
         
-        Cast(output_local, input_local, RoundMode::CAST_NONE, local_buffer_elems);
+        Cast(output_local, input_local, RoundMode::CAST_NONE, 
+             local_buffer_elems);
         output_queue.EnQue(output_local);
         copy_out(output_offset, input_ne[0]);
 

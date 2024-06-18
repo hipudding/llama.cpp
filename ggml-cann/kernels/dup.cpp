@@ -12,6 +12,10 @@ class DupByRows {
    public:
     __aicore__ inline DupByRows() {}
     __aicore__ inline void init(GM_ADDR src, GM_ADDR dst, dup_param& param) {
+        /* Dup by rows when src is contigous on first dimension and dst is 
+        contiguous, each kernel process one row.
+        */
+
         // Input has four dims.
         int64_t op_block_num = GetBlockNum();
         int64_t op_block_idx = GetBlockIdx();
@@ -20,24 +24,31 @@ class DupByRows {
         num_rows = param.src_ne[1] * param.src_ne[2] * param.src_ne[3];
         num_elem = param.src_ne[0];
         
-        idx_0 = op_block_idx / (param.src_ne[1] * param.src_ne[2]);
-        idx_1 = (op_block_idx - idx_0 * (param.src_ne[1] * param.src_ne[2])) 
-                 / (param.src_ne[1]);
-        idx_2 = op_block_idx - idx_0 * (param.src_ne[1] * param.src_ne[2]) 
-                - idx_1 * param.src_ne[1];
-                
-        src_stride = param.src_nb[3] * idx_0 + param.src_nb[2] * idx_1
-                     + param.src_nb[1] * idx_2;
-                     
-        dst_stride = (idx_0 * (param.src_ne[1] * param.src_ne[2]) + 
-                      idx_1 * param.src_ne[1] + 
-                      idx_2) * (param.src_ne[0] * sizeof(DST_T));
-        
-        src_gm.SetGlobalBuffer(reinterpret_cast<__gm__ SRC_T *>(src + src_stride));
-        dst_gm.SetGlobalBuffer(reinterpret_cast<__gm__ DST_T *>(dst + dst_stride));
+        // index for (ne[1], ne[2], ne[3]): (idx_ne1, idx_ne2, idx_ne3) 
+        idx_ne3 = op_block_idx / (param.src_ne[1] * param.src_ne[2]);
+        idx_ne2 = (op_block_idx - idx_ne3 * (param.src_ne[1] * param.src_ne[2])) 
+                  / (param.src_ne[1]);
+        idx_ne1 = op_block_idx - idx_ne3 * (param.src_ne[1] * param.src_ne[2]) 
+                - idx_ne2 * param.src_ne[1];
 
-        pipe.InitBuffer(src_queue, BUFFER_NUM, (sizeof(SRC_T) * num_elem + 32 - 1) / 32 * 32);
-        pipe.InitBuffer(dst_queue, BUFFER_NUM, (sizeof(DST_T) * num_elem + 32 - 1) / 32 * 32);
+        // src may not contiguous in dim [1,2,3], so stride decited by ne&nb
+        src_stride = param.src_nb[3] * idx_ne3 + param.src_nb[2] * idx_ne2
+                     + param.src_nb[1] * idx_ne1;
+        
+        // dst is contiguous
+        dst_stride = (idx_ne3 * (param.src_ne[1] * param.src_ne[2]) + 
+                      idx_ne2 * param.src_ne[1] + 
+                      idx_ne1) * (param.src_ne[0] * sizeof(DST_T));
+        
+        src_gm.SetGlobalBuffer(reinterpret_cast<__gm__ SRC_T *>(src + 
+                                                                src_stride));
+        dst_gm.SetGlobalBuffer(reinterpret_cast<__gm__ DST_T *>(dst + 
+                                                                dst_stride));
+
+        pipe.InitBuffer(src_queue, BUFFER_NUM, (sizeof(SRC_T) * num_elem + 
+                                                32 - 1) / 32 * 32);
+        pipe.InitBuffer(dst_queue, BUFFER_NUM, (sizeof(DST_T) * num_elem + 
+                                                32 - 1) / 32 * 32);
     }
 
     __aicore__ inline void copy_in() {
@@ -64,6 +75,7 @@ class DupByRows {
     }
 
     __aicore__ inline void dup() {
+        // main process, copy one row data from src to dst.
         copy_in();
         
         LocalTensor<SRC_T> src_local = src_queue.DeQue<SRC_T>();
@@ -74,12 +86,13 @@ class DupByRows {
                                         / BLOCK_NUM * BLOCK_NUM);    
         dst_queue.EnQue<DST_T>(dst_local);
 
-        //
         src_queue.FreeTensor(src_local);
         copy_out();
     }
 
     __aicore__ inline void dup_with_cast() {
+        // main process, copy one row data from src to dst.
+        // cast dtype from src to dst.
         copy_in();
         
         LocalTensor<SRC_T> src_local = src_queue.DeQue<SRC_T>();
@@ -88,7 +101,6 @@ class DupByRows {
         Cast(dst_local, src_local, RoundMode::CAST_NONE, num_elem); 
         dst_queue.EnQue<DST_T>(dst_local);
 
-        //
         src_queue.FreeTensor(src_local);
         copy_out();
     }
@@ -101,9 +113,9 @@ class DupByRows {
 
     int64_t num_rows;
     int64_t num_elem;
-    int64_t idx_0;
-    int64_t idx_1;
-    int64_t idx_2;
+    int64_t idx_ne3;
+    int64_t idx_ne2;
+    int64_t idx_ne1;
     int64_t src_stride;
     int64_t dst_stride;
     
@@ -158,7 +170,8 @@ extern "C" __global__ __aicore__ void ascendc_dup_by_rows_fp32(GM_ADDR src_gm,
     op.dup(); 
 }
 
-extern "C" __global__ __aicore__ void ascendc_dup_by_rows_fp32_to_fp16(GM_ADDR src_gm,
+extern "C" __global__ __aicore__ void ascendc_dup_by_rows_fp32_to_fp16(
+                                                               GM_ADDR src_gm,
                                                                GM_ADDR dst_gm,
                                                                GM_ADDR param) {
 
@@ -177,7 +190,8 @@ extern "C" __global__ __aicore__ void ascendc_dup_by_rows_fp32_to_fp16(GM_ADDR s
     op.dup_with_cast(); 
 }
 
-extern "C" __global__ __aicore__ void ascendc_dup_by_rows_fp16_to_fp32(GM_ADDR src_gm,
+extern "C" __global__ __aicore__ void ascendc_dup_by_rows_fp16_to_fp32(
+                                                               GM_ADDR src_gm,
                                                                GM_ADDR dst_gm,
                                                                GM_ADDR param) {
 
