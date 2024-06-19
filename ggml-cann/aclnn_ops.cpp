@@ -196,7 +196,7 @@ void ggml_cann_concat(ggml_backend_cann_context& ctx, ggml_tensor* dst) {
 void aclnn_arange(ggml_backend_cann_context& ctx, aclTensor* acl_dst,
                   float start, float stop, float step, int64_t n_elements,
                   ggml_tensor* bind_tensor) {
-    // arange: [start, end), out(i+1) = out(i) + step.
+    // arange: [start, stop), out(i+1) = out(i) + step.
 
     int64_t steps = (int64_t)std::ceil((stop - start) / step);
     GGML_ASSERT(n_elements == steps);
@@ -433,7 +433,9 @@ void ggml_cann_group_norm(ggml_backend_cann_context& ctx, ggml_tensor* dst) {
 }
 
 void ggml_cann_acc(ggml_backend_cann_context& ctx, ggml_tensor* dst) {
-    // if inplace: dst = 
+    // if inplace: dst = dst + alpha * src1 
+    // else:       dst = src0 + alpha * src1
+
     ggml_tensor* src0 = dst->src[0];
     ggml_tensor* src1 = dst->src[1];
 
@@ -487,6 +489,8 @@ void ggml_cann_acc(ggml_backend_cann_context& ctx, ggml_tensor* dst) {
 }
 
 void ggml_cann_sum_rows(ggml_backend_cann_context& ctx, ggml_tensor* dst) {
+    // reducesum along last dim.
+
     ggml_tensor* src = dst->src[0];
 
     aclTensor* acl_src = create_acl_tensor(src);
@@ -524,7 +528,6 @@ void ggml_cann_upsample_nearest2d(ggml_backend_cann_context& ctx,
     aclTensor* acl_dst =
         create_acl_tensor(dst, nullptr, nullptr, 0, ACL_FORMAT_NCHW);
 
-    const int scale_factor = dst->op_params[0];
     std::vector<int64_t> output_size{dst->ne[1], dst->ne[0]};
     auto output_size_array = aclCreateIntArray(output_size.data(), 2);
 
@@ -578,6 +581,10 @@ void ggml_cann_pad(ggml_backend_cann_context& ctx, ggml_tensor* dst) {
     aclTensor* acl_src = create_acl_tensor(src);
     aclTensor* acl_dst = create_acl_tensor(dst);
 
+    // padding: value in the array means how much distance will be padding.  
+    // the position of elements in the array means which dirction to padding, 
+    // each position means: [dim0.front, dim0.behind, dim1.front, dim1.behind,
+    //                       dim2.front, dim2.behind, dim3.front, dim3.behind]
     int64_t paddings[] = {
         0, dst->ne[0] - src->ne[0], 0, dst->ne[1] - src->ne[1],
         0, dst->ne[2] - src->ne[2], 0, dst->ne[3] - src->ne[3]};
@@ -625,8 +632,7 @@ void ggml_cann_avg_pool2d(ggml_backend_cann_context& ctx, ggml_tensor* dst) {
 
     std::vector<int64_t> kernel_dims = {k1, k0};
     std::vector<int64_t> stride_dims = {s1, s0};
-    std::vector<int64_t> padding_avg_dims = {p1, p0};  // h, w
-    std::vector<int64_t> padding_max_dims = {p1, p0, 0, 0};
+    std::vector<int64_t> padding_avg_dims = {p1, p0};  // (padH, padW)
 
     auto* kernel_size = aclCreateIntArray(kernel_dims.data(), 2);
     auto* strides = aclCreateIntArray(stride_dims.data(), 2);
@@ -694,7 +700,7 @@ void ggml_cann_max_pool2d(ggml_backend_cann_context& ctx, ggml_tensor* dst) {
         create_acl_tensor(buffer, ACL_FLOAT, ggml_element_size(src), temp_ne,
                           temp_nb, GGML_MAX_DIMS, ACL_FORMAT_NCHW);
 
-    // pad
+    // pad: see padding in ggml_cann_pad()
     int64_t paddings[] = {p0, p0, p1, p1, 0, 0, 0, 0};
     float value = -FLT_MAX;
     aclnn_pad(ctx, dst, acl_src, tmp_tensor, paddings, value);
@@ -702,6 +708,7 @@ void ggml_cann_max_pool2d(ggml_backend_cann_context& ctx, ggml_tensor* dst) {
     // max_pool
     std::vector<int64_t> kernel_dims = {k1, k0};
     std::vector<int64_t> stride_dims = {s1, s0};
+    // padding_max_dims: [dim0_start, dim0_end, dim1_start, dim1_end]
     std::vector<int64_t> padding_max_dims = {0, 0, 0, 0};
     std::vector<int64_t> dilation_size = {1, 1};
     auto* kernel_size = aclCreateIntArray(kernel_dims.data(), 2);
@@ -1453,6 +1460,8 @@ void ggml_cann_timestep_embedding(ggml_backend_cann_context& ctx,
 
 void aclnn_fill_scalar(ggml_backend_cann_context& ctx, float scalar,
                        aclTensor* acl_dst, ggml_tensor* bind_tensor) {
+    // fill acl_dst with scalar value.
+
     auto acl_scalar = aclCreateScalar(&scalar, aclDataType::ACL_FLOAT);
 
     uint64_t workspaceSize = 0;
@@ -1472,6 +1481,8 @@ void aclnn_fill_scalar(ggml_backend_cann_context& ctx, float scalar,
 
 void aclnn_pow_tensor_tensor(ggml_backend_cann_context& ctx, aclTensor* acl_dst,
                              aclTensor* acl_exp, ggml_tensor* bind_tensor) {
+    // acl_dst = acl_dst^acl_exp
+
     uint64_t workspaceSize = 0;
     aclOpExecutor* executor;
     void* workspaceAddr = nullptr;
@@ -1583,7 +1594,7 @@ void aclnn_alibi(ggml_backend_cann_context& ctx, aclTensor* acl_src,
         tmp_mk_base_buffer, type_mapping(dst->type), ggml_type_size(dst->type),
         tmp_mk_ne, tmp_mk_nb, GGML_MAX_DIMS, ACL_FORMAT_ND);
 
-    // arange3 * mk
+    // acl_position * mk
     int64_t tmp_output_ne[] = {src_ne0, 1, src_ne2, src_ne3};
     size_t tmp_output_nb[GGML_MAX_DIMS];
     tmp_output_nb[0] = ggml_type_size(dst->type);
@@ -1700,8 +1711,6 @@ void ggml_cann_softmax(ggml_backend_cann_context& ctx, ggml_tensor* dst) {
     memcpy(&max_bias, (float*)dst->op_params + 1, sizeof(float));
 
     aclScalar* acl_scale = aclCreateScalar(&scale, aclDataType::ACL_FLOAT);
-    aclScalar* acl_max_bias =
-        aclCreateScalar(&max_bias, aclDataType::ACL_FLOAT);
 
     size_t n_bytes = ggml_nbytes(src0);
     void* buffer = ctx.alloc_buffer(dst, n_bytes);
@@ -1815,6 +1824,7 @@ void ggml_cann_get_rows(ggml_backend_cann_context& ctx, ggml_tensor* dst) {
                 ((ggml_tensor*)dst->extra)->nb);
             break;
         default:
+            GGML_ASSERT(false);  
             break;
     }
 }
@@ -1822,6 +1832,8 @@ void ggml_cann_get_rows(ggml_backend_cann_context& ctx, ggml_tensor* dst) {
 void aclnn_repeat_interleave(ggml_backend_cann_context& ctx, aclTensor* acl_src,
                              aclTensor* acl_dst, int64_t dim, int64_t repeats, 
                              int64_t output_size, ggml_tensor* bind_tensor) {
+    // each elem in acl_src will repeat. repeat number is `repeats`, repeats dim
+    // is `dim`.
 
     uint64_t workspaceSize = 0;
     aclOpExecutor* executor;
@@ -1843,10 +1855,11 @@ void aclnn_repeat_interleave(ggml_backend_cann_context& ctx, aclTensor* acl_src,
 
 }
 
-void aclnn_mul_mat(ggml_backend_cann_context& ctx, aclTensor* acl_input,
+void aclnn_mat_mul(ggml_backend_cann_context& ctx, aclTensor* acl_input,
                    aclTensor* acl_weight, aclTensor* acl_dst, 
                    ggml_tensor* bind_tensor) {
-    int8_t cube_math_type = 1;
+    int8_t cube_math_type = 1; // ALLOW_FP32_DOWN_PRECISION, when input is fp32,
+                               // atlas a2 will transpose it to HFLOAT32.
 
     uint64_t workspaceSize = 0;
     aclOpExecutor* executor;
@@ -1864,11 +1877,12 @@ void aclnn_mul_mat(ggml_backend_cann_context& ctx, aclTensor* acl_input,
                                main_stream));
 }
 
-void ggml_cann_mul_mat_fp(ggml_backend_cann_context& ctx, ggml_tensor* dst) {
+void ggml_cann_mat_mul_fp(ggml_backend_cann_context& ctx, ggml_tensor* dst) {
     ggml_tensor* src0 = dst->src[0];  // weight
     ggml_tensor* src1 = dst->src[1];  // input
 
-    // weight need repeat
+    // when weight ne2 or ne3 is 1, aclnnMatmulGetWorkspaceSize will auto broadcast,
+    // when weight ne2 or ne3 is not 1, weight need repeat. 
     int repeat_dim2 = 1;
     if (src0->ne[2] != src1->ne[2] && src0->ne[2] !=1) {
         repeat_dim2 = src1->ne[2] / src0->ne[2];    
@@ -1941,7 +1955,7 @@ void ggml_cann_mul_mat_fp(ggml_backend_cann_context& ctx, ggml_tensor* dst) {
         acl_repeat_weight_buffer = src0->data; 
     }
 
-     // transpose weight: [a,b,c,d] -> [a,b,d,c]
+    // transpose weight: [1,2,3,4] -> [1,2,4,3]
     int64_t weight_ne[] = {weight_repeat_ne[1], weight_repeat_ne[0], 
                            weight_repeat_ne[2], weight_repeat_ne[3]};
     size_t weight_nb[] = {weight_repeat_nb[1], weight_repeat_nb[0], 
@@ -1958,7 +1972,7 @@ void ggml_cann_mul_mat_fp(ggml_backend_cann_context& ctx, ggml_tensor* dst) {
     // mul_mat
     aclTensor* acl_input_tensor = create_acl_tensor(src1);
     aclTensor* acl_dst = create_acl_tensor(dst);
-    aclnn_mul_mat(ctx, acl_input_tensor, acl_weight_transpose_tensor, acl_dst, 
+    aclnn_mat_mul(ctx, acl_input_tensor, acl_weight_transpose_tensor, acl_dst, 
                   dst);
 
     ACL_CHECK(aclDestroyTensor(acl_weight_tensor));
@@ -2093,7 +2107,7 @@ void ggml_cann_mul_mat(ggml_backend_cann_context& ctx, ggml_tensor* dst) {
     switch (type) {
         case GGML_TYPE_F32:
         case GGML_TYPE_F16:
-            ggml_cann_mul_mat_fp(ctx, dst);
+            ggml_cann_mat_mul_fp(ctx, dst);
             break;
         // case GGML_TYPE_Q4_0:
         //     ggml_cann_mul_mat_q4_0(ctx, dst);
@@ -2102,6 +2116,7 @@ void ggml_cann_mul_mat(ggml_backend_cann_context& ctx, ggml_tensor* dst) {
             ggml_cann_mul_mat_q8_0(ctx, dst);
             break;
         default:
+            GGML_ASSERT(false);
             break;
     }
 }
@@ -2201,9 +2216,9 @@ void ggml_cann_rope(ggml_backend_cann_context& ctx, ggml_tensor* dst) {
                                              * sizeof(float_t));
     void* cos_buffer = ctx.alloc_buffer(dst, src0->ne[0] * src0->ne[2] 
                                              * sizeof(float_t));
-    aclrtlaunch_ascendc_rope_init_cache(1, ctx.stream(), position_cast_buffer, 
-                                        sin_buffer, cos_buffer, 
-                                        param_buffer);
+    aclrtlaunch_ascendc_rope_init_cache(param.position_ne[0], ctx.stream(), 
+                                        position_cast_buffer, 
+                                        sin_buffer, cos_buffer, param_buffer);
     ACL_CHECK(aclrtFree(param_buffer));
 
     // reshape sin&cos
@@ -2225,7 +2240,7 @@ void ggml_cann_rope(ggml_backend_cann_context& ctx, ggml_tensor* dst) {
                                                           sin_reshape_nb, 
                                                           GGML_MAX_DIMS);
     
-    // TODO: warp the flowing as aclrtlaunch_ascendc_rope_cal<<<>>>
+    // TODO: warp the following as aclrtlaunch_ascendc_rope_cal<<<>>>
     // roll input
     void* input_roll_buffer;
     aclTensor* acl_minus_one_tensor;

@@ -14,49 +14,50 @@ class InitCache {
                                 GM_ADDR sin_output,
                                 GM_ADDR cos_output,
                                 rope_param& param) {
-        /*Init sin&cos cache for rope. 
-        impl of ggml_compute_forward_rope_f32()
+        /*Init sin&cos cache for rope, impl of ggml_compute_forward_rope_f32().
+        each kernel process input_ne[0]*1 cache.
         */
         // Input has four dims. [batch, seq_len, heads, head_dim].
         int64_t op_block_num = GetBlockNum();
         int64_t op_block_idx = GetBlockIdx();
 
         // arange param
+        // head_dim = param.input_ne[0];
         head_dim = param.input_ne[0];
-        first_value_ = 0;
-        diff_value_ = 1;
-        count_ = head_dim / 2;
+        first_value = 0;
+        diff_value = 1;
+        count = head_dim / 2;
 
         // power param
         theta_scale = param.theta_scale;
         
         // broadcast param
-        // arange_shape: [count_, 1] -> broadcast_shape0: [count_, 2]
-        arange_shape[0] = count_;
+        // arange_shape: [count, 1] -> broadcast_shape0: [count, 2]
+        arange_shape[0] = count;
         arange_shape[1] = 1;
-        broadcast_shape0[0] = count_;
+        broadcast_shape0[0] = count;
         broadcast_shape0[1] = 2;
 
         // broadcast_shape1: [1, head_dim] -> 
-        //                   broadcast_shape2: [position_ne[0], head_dim]
+        //                   broadcast_shape2: [1, head_dim]
         broadcast_shape1[0] = 1;
         broadcast_shape1[1] = head_dim;
-        broadcast_shape2[0] = param.position_ne[0];
+        broadcast_shape2[0] = 1;
         broadcast_shape2[1] = head_dim;
 
         // arange_shape1: [1, count_] -> broadcast_shape3: [2, count_]
         arange_shape1[0] = 1;
-        arange_shape1[1] = count_;
+        arange_shape1[1] = count;
         broadcast_shape3[0] = 2;
-        broadcast_shape3[1] = count_;
+        broadcast_shape3[1] = count;
         
-        // position_shape: [param.position_ne[0], 1] -> 
-        //                 broadcast_shape2: [position_ne[0], head_dim]
-        position_shape[0] = param.position_ne[0];
+        // position_shape: [1, 1] -> 
+        //                 broadcast_shape2: [1, head_dim]
+        position_shape[0] = 1;
         position_shape[1] = 1;
 
         // position raw and brcst size.
-        position_size = position_shape[0] * position_shape[1];
+        position_size = 1;
         broadcast_size  = broadcast_shape2[0] * broadcast_shape2[1];
         
         // other param
@@ -65,16 +66,20 @@ class InitCache {
         is_neox = param.is_neox;
         is_glm = param.is_glm;
 
-        position_gm.SetGlobalBuffer((__gm__ float_t*)position);
-        output_sin_gm.SetGlobalBuffer((__gm__ float_t*)sin_output);
-        output_cos_gm.SetGlobalBuffer((__gm__ float_t*)cos_output);
+        // stride
+        position_stride = op_block_idx;
+        sin_output_stride = op_block_idx * broadcast_size;
+
+        position_gm.SetGlobalBuffer((__gm__ float_t*)position + position_stride);
+        output_sin_gm.SetGlobalBuffer((__gm__ float_t*)sin_output + sin_output_stride);
+        output_cos_gm.SetGlobalBuffer((__gm__ float_t*)cos_output + sin_output_stride);
         
         pipe.InitBuffer(power_queue, BUFFER_NUM, 
-                        (sizeof(float_t)*count_+32-1)/32*32);
+                        (sizeof(float_t)*count+32-1)/32*32);
         pipe.InitBuffer(position_queue, BUFFER_NUM, 
                         (sizeof(float_t)*position_shape[0]+32-1)/32*32);
         pipe.InitBuffer(arange_queue, BUFFER_NUM, 
-                        (sizeof(float_t)*count_+32-1)/32*32);
+                        (sizeof(float_t)*count+32-1)/32*32);
         pipe.InitBuffer(sin_mul_mscale_queue, BUFFER_NUM, 
                         (sizeof(float_t)*broadcast_size+32-1)/32*32);
         pipe.InitBuffer(cos_mul_mscale_queue, BUFFER_NUM, 
@@ -82,7 +87,7 @@ class InitCache {
         pipe.InitBuffer(position_mul_freq_buffer, 
                         (sizeof(float_t)*position_shape[0]+32-1)/32*32);
         pipe.InitBuffer(broadcast_power_buffer, 
-                        (sizeof(float_t)*2*count_+32-1)/32*32);
+                        (sizeof(float_t)*2*count+32-1)/32*32);
         pipe.InitBuffer(broadcast_power_buffer2, 
                         (sizeof(float_t)*broadcast_size+32-1)/32*32);
         pipe.InitBuffer(broadcast_position_buffer, 
@@ -122,8 +127,7 @@ class InitCache {
 
         // arange    
         LocalTensor<float_t> arange_local = arange_queue.AllocTensor<float_t>();
-        ArithProgression<float_t>(arange_local, first_value_, diff_value_, 
-                                  count_);
+        ArithProgression<float_t>(arange_local, first_value, diff_value, count);
         
         // pow
         LocalTensor<float_t> power_local = power_queue.AllocTensor<float_t>();
@@ -223,9 +227,9 @@ class InitCache {
    private:
 
     int64_t head_dim;
-    float_t first_value_;
-    float_t diff_value_;
-    int32_t count_;
+    float_t first_value;
+    float_t diff_value;
+    int32_t count;
     float_t theta_scale;
     float_t attn_factor;
     float_t freq_scale;
@@ -241,6 +245,8 @@ class InitCache {
     uint32_t arange_shape1[2];
     int64_t broadcast_size;
     int64_t position_size;
+    int64_t position_stride;
+    int64_t sin_output_stride;
   
     TPipe pipe;
     GlobalTensor<float_t> position_gm;
