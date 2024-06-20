@@ -38,27 +38,21 @@ class InitCache {
         broadcast_shape0[0] = count;
         broadcast_shape0[1] = 2;
 
-        // broadcast_shape1: [1, head_dim] -> 
-        //                   broadcast_shape2: [1, head_dim]
-        broadcast_shape1[0] = 1;
-        broadcast_shape1[1] = head_dim;
-        broadcast_shape2[0] = 1;
-        broadcast_shape2[1] = head_dim;
-
-        // arange_shape1: [1, count_] -> broadcast_shape3: [2, count_]
+        // arange_shape1: [1, count_] -> broadcast_shape2: [2, count_]
         arange_shape1[0] = 1;
         arange_shape1[1] = count;
-        broadcast_shape3[0] = 2;
-        broadcast_shape3[1] = count;
+        broadcast_shape2[0] = 2;
+        broadcast_shape2[1] = count;
         
-        // position_shape: [1, 1] -> 
-        //                 broadcast_shape2: [1, head_dim]
+        // position_shape: [1, 1] -> broadcast_shape1: [1, head_dim]
         position_shape[0] = 1;
         position_shape[1] = 1;
+        broadcast_shape1[0] = 1;
+        broadcast_shape1[1] = head_dim;
 
         // position raw and brcst size.
         position_size = 1;
-        broadcast_size  = broadcast_shape2[0] * broadcast_shape2[1];
+        broadcast_size  = broadcast_shape1[0] * broadcast_shape1[1];
         
         // other param
         attn_factor = param.attn_factor;
@@ -77,21 +71,15 @@ class InitCache {
         pipe.InitBuffer(power_queue, BUFFER_NUM, 
                         (sizeof(float_t)*count+32-1)/32*32);
         pipe.InitBuffer(position_queue, BUFFER_NUM, 
-                        (sizeof(float_t)*position_shape[0]+32-1)/32*32);
+                        (sizeof(float_t)*position_size+32-1)/32*32);
         pipe.InitBuffer(arange_queue, BUFFER_NUM, 
                         (sizeof(float_t)*count+32-1)/32*32);
         pipe.InitBuffer(sin_mul_mscale_queue, BUFFER_NUM, 
                         (sizeof(float_t)*broadcast_size+32-1)/32*32);
         pipe.InitBuffer(cos_mul_mscale_queue, BUFFER_NUM, 
                         (sizeof(float_t)*broadcast_size+32-1)/32*32);
-        pipe.InitBuffer(position_mul_freq_buffer, 
-                        (sizeof(float_t)*position_shape[0]+32-1)/32*32);
         pipe.InitBuffer(broadcast_power_buffer, 
-                        (sizeof(float_t)*2*count+32-1)/32*32);
-        pipe.InitBuffer(broadcast_power_buffer2, 
-                        (sizeof(float_t)*broadcast_size+32-1)/32*32);
-        pipe.InitBuffer(broadcast_position_buffer, 
-                        (sizeof(float_t)*broadcast_size+32-1)/32*32);
+                        (sizeof(float_t)*count+32-1)/32*32);
         pipe.InitBuffer(theta_buffer, 
                         (sizeof(float_t)*broadcast_size+32-1)/32*32);
         pipe.InitBuffer(sin_buffer,
@@ -103,9 +91,16 @@ class InitCache {
     __aicore__ inline void copy_in() {
         LocalTensor<float_t> input_local = 
                                         position_queue.AllocTensor<float_t>();
-        int32_t BLOCK_NUM = 32 / sizeof(float_t);
-        DataCopy(input_local, position_gm, (position_size + BLOCK_NUM - 1) 
-                                            / BLOCK_NUM * BLOCK_NUM);
+        // int32_t BLOCK_NUM = 32 / sizeof(float_t);
+        // DataCopy(input_local, position_gm, (position_size + BLOCK_NUM - 1) 
+        //                                     / BLOCK_NUM * BLOCK_NUM);
+        
+        DataCopyExtParams dataCopyParams;
+        dataCopyParams.blockCount = 1;
+        dataCopyParams.blockLen = position_size * sizeof(float_t);
+        DataCopyPadExtParams<float_t> padParams;
+        DataCopyPad(input_local, position_gm, dataCopyParams, padParams);
+
         position_queue.EnQue(input_local);
     }
 
@@ -134,12 +129,8 @@ class InitCache {
         Power<float_t, false>(power_local, static_cast<float_t>(theta_scale), 
                               arange_local);
         
-        LocalTensor<float_t> position_brcast_local = 
-                                       broadcast_position_buffer.Get<float_t>();
         LocalTensor<float_t> power_brcast_local = 
                                        broadcast_power_buffer.Get<float_t>();
-        LocalTensor<float_t> power_brcast_local2 = 
-                                       broadcast_power_buffer2.Get<float_t>();
 
         //TODO: is_glm==true.
         if (!is_glm && !is_neox) {    
@@ -147,18 +138,14 @@ class InitCache {
             //      dst_data[1] = x0*sin_theta*zeta + x1*cos_theta*zeta;
             // the value of 0,1 or 2,3, ..., should be same.
 
-            // broadcast: e.g. arange [64, 1] -> [64, 2] -> [1, 128] -> [10, 128]
+            // broadcast: e.g. arange [64, 1] -> [64, 2]
             BroadCast<float_t, 2, 1>(power_brcast_local, power_local, 
                                      broadcast_shape0, arange_shape);
-            BroadCast<float_t, 2, 0>(power_brcast_local2, power_brcast_local, 
-                                     broadcast_shape2, broadcast_shape1);
-
-            // boradcast: e.g. position [10, 1] -> [10, 128] 
+            // position: [1] 
             copy_in();
             LocalTensor<float_t> position_local = 
                                      position_queue.DeQue<float_t>();
-            BroadCast<float_t, 2, 1>(position_brcast_local, position_local, 
-                                     broadcast_shape2, position_shape);   
+            position_value = position_local.GetValue(0);
             position_queue.FreeTensor(position_local);
         }
         else {
@@ -166,33 +153,23 @@ class InitCache {
             //      dst_data[n_dims/2] = x0*sin_theta + x1*cos_theta;
             // the value of 0,n_dims/2 or 1,n/dims/2+1 should be same.
 
-            // broadcast: e.g. arange [1, 64] -> [2, 64] -> [1, 128] -> [10, 128]
+            // broadcast: e.g. arange [1, 64] -> [2, 64]
             BroadCast<float_t, 2, 0>(power_brcast_local, power_local, 
-                                     broadcast_shape3, arange_shape1);
-            BroadCast<float_t, 2, 0>(power_brcast_local2, power_brcast_local, 
-                                     broadcast_shape2, broadcast_shape1);
+                                     broadcast_shape2, arange_shape1);
 
             // position * freq_scale
             copy_in();
             LocalTensor<float_t> position_local = 
                                         position_queue.DeQue<float_t>();
-            LocalTensor<float_t> position_mul_freq_local = 
-                                        position_mul_freq_buffer.Get<float_t>();
-            Muls(position_mul_freq_local, position_local, freq_scale, 
-                 position_shape[0]);
-
-            // boradcast: e.g. position [10, 1] -> [10, 128]
-            BroadCast<float_t, 2, 1>(position_brcast_local, 
-                                     position_mul_freq_local, 
-                                     broadcast_shape2, position_shape);
-            position_queue.FreeTensor(position_local);
-            position_mul_freq_buffer.FreeTensor(position_mul_freq_local);
+            position_value = position_local.GetValue(0);
+            position_value = position_value * freq_scale;  
+            position_queue.FreeTensor(position_local);     
         }
         
         // theta
         LocalTensor<float_t> theta_local = theta_buffer.Get<float_t>(); 
-        Mul<float_t>(theta_local, position_brcast_local, power_brcast_local2, 
-                     broadcast_size);
+        Muls(theta_local, power_brcast_local, position_value, 
+             broadcast_size);
 
         // sin & cos
         // TODO: if ext_factor != 0
@@ -212,8 +189,6 @@ class InitCache {
         arange_queue.FreeTensor(arange_local);
         power_queue.FreeTensor(power_local);
         broadcast_power_buffer.FreeTensor(power_brcast_local);
-        broadcast_power_buffer2.FreeTensor(power_brcast_local2);
-        broadcast_position_buffer.FreeTensor(position_brcast_local);
         theta_buffer.FreeTensor(theta_local);
         sin_buffer.FreeTensor(sin_local);
         cos_buffer.FreeTensor(cos_local);
@@ -239,7 +214,6 @@ class InitCache {
     uint32_t broadcast_shape0[2];
     uint32_t broadcast_shape1[2];
     uint32_t broadcast_shape2[2];
-    uint32_t broadcast_shape3[2];
     uint32_t position_shape[2];
     uint32_t arange_shape[2];
     uint32_t arange_shape1[2];
@@ -247,6 +221,7 @@ class InitCache {
     int64_t position_size;
     int64_t position_stride;
     int64_t sin_output_stride;
+    float_t position_value;
   
     TPipe pipe;
     GlobalTensor<float_t> position_gm;
@@ -257,10 +232,7 @@ class InitCache {
     TQue<QuePosition::VECIN, BUFFER_NUM> position_queue;
     TQue<QuePosition::VECOUT, BUFFER_NUM> sin_mul_mscale_queue;
     TQue<QuePosition::VECOUT, BUFFER_NUM> cos_mul_mscale_queue;
-    TBuf<QuePosition::VECCALC> position_mul_freq_buffer;
-    TBuf<QuePosition::VECCALC> broadcast_position_buffer;
     TBuf<QuePosition::VECCALC> broadcast_power_buffer;
-    TBuf<QuePosition::VECCALC> broadcast_power_buffer2;
     TBuf<QuePosition::VECCALC> theta_buffer;
     TBuf<QuePosition::VECCALC> sin_buffer;
     TBuf<QuePosition::VECCALC> cos_buffer;
