@@ -24,7 +24,7 @@ aclDataType type_mapping(ggml_type type) {
     return ACL_DT_UNDEFINED;
 }
 
-bool nb3_is_valid(const ggml_tensor* tensor) {
+static bool nb3_is_valid(const ggml_tensor* tensor) {
     // check tensor->nb[3] is contiguous by ne.
     if (tensor->nb[3] == tensor->ne[0] * tensor->ne[1] * tensor->ne[2] *
                              ggml_element_size(tensor)) {
@@ -45,19 +45,6 @@ bool nb3_is_valid(const ggml_tensor* tensor) {
 aclTensor* create_acl_tensor(const ggml_tensor* tensor, int64_t* bcast_ne,
                              size_t* bcast_nb, int64_t bcast_dims,
                              aclFormat format, size_t offset) {
-    size_t size = ggml_nbytes(tensor);
-    void* deviceAddr = nullptr;
-
-    if (tensor->backend == GGML_BACKEND_TYPE_GPU) {
-        deviceAddr = tensor->data;
-    } else {
-        // TODO: Consider quantification.
-        GGML_ASSERT(!ggml_is_quantized(tensor->type));
-        ACL_CHECK(aclrtMalloc(&deviceAddr, size, ACL_MEM_MALLOC_HUGE_FIRST));
-        ACL_CHECK(aclrtMemcpy(deviceAddr, size, tensor->data, size,
-                              ACL_MEMCPY_HOST_TO_DEVICE));
-    }
-
     // If tensor is bcasted, Up to GGML_MAX_DIMS additional dimensions will be
     // added.
     int64_t acl_ne[GGML_MAX_DIMS * 2], acl_stride[GGML_MAX_DIMS * 2];
@@ -114,7 +101,7 @@ aclTensor* create_acl_tensor(const ggml_tensor* tensor, int64_t* bcast_ne,
     aclTensor* acl_tensor =
         aclCreateTensor(acl_ne, dims, type_mapping(tensor->type), acl_stride,
                         offset / ggml_element_size(tensor), format,
-                        acl_storage_ne, dims, deviceAddr);
+                        acl_storage_ne, dims, tensor->data);
 
     return acl_tensor;
 }

@@ -1645,32 +1645,9 @@ struct test_flash_attn_ext : public test_case {
         ggml_tensor * v = ggml_new_tensor_4d(ctx, type_KV,       hs_padded, kv, nh, 1);
         ggml_tensor * m = mask ? ggml_new_tensor_4d(ctx, GGML_TYPE_F16, kv, GGML_PAD(nb, GGML_KQ_MASK_PAD), 1, 1) : nullptr;
         ggml_tensor * out = ggml_flash_attn_ext(ctx, q, k, v, m, 1.0f/sqrtf(hs), max_bias);
-
-// GGML_OP_ALIBI
-struct test_alibi : public test_case {
-    const ggml_type type;
-    const std::array<int64_t, 4> ne_a;
-    const int n_past;
-    const int n_head;
-    const float bias_max;
-
-    std::string vars() override {
-        return VARS_TO_STR5(type, ne_a, n_past, n_head, bias_max);
-    }
-
-    test_alibi(ggml_type type = GGML_TYPE_F32,
-            std::array<int64_t, 4> ne_a = {30, 20, 10, 1},
-            int n_past = 0, int n_head = 10,
-            float bias_max = 0.9f)
-        : type(type), ne_a(ne_a), n_past(n_past), n_head(n_head), bias_max(bias_max)  {}
-
-    ggml_tensor * build_graph(ggml_context * ctx) override {
-        ggml_tensor * a = ggml_new_tensor(ctx, type, 4, ne_a.data());
-        ggml_tensor * out = ggml_alibi(ctx, a, n_past, n_head, bias_max);
         return out;
     }
 };
-
 enum llm_norm_type {
     LLM_NORM,
     LLM_NORM_RMS,
@@ -2353,19 +2330,6 @@ static bool test_backend(ggml_backend_t backend, test_mode mode, const char * op
                 }
             }
         }
-
-    for (ggml_type type : {GGML_TYPE_F32, GGML_TYPE_F16}) {
-        test_cases.emplace_back(new test_rope(type, {128,  32, 10, 1}, 128, 0, 512)); // llama 7B
-        test_cases.emplace_back(new test_rope(type, {128,  32, 512, 1}, 128, 0, 512)); // llama 8B
-        test_cases.emplace_back(new test_rope(type, {128,  40, 10, 1}, 128, 0, 512)); // llama 13B
-        test_cases.emplace_back(new test_rope(type, {128,  52, 10, 1}, 128, 0, 512)); // llama 30B
-        test_cases.emplace_back(new test_rope(type, {128,  64, 10, 1}, 128, 0, 512)); // llama 65B
-        test_cases.emplace_back(new test_rope(type, { 64,   1, 10, 1},  64, 2, 512)); // neox (falcon 7B)
-        test_cases.emplace_back(new test_rope(type, { 64,  71, 10, 1},  64, 2, 512)); // neox (falcon 7B)
-        test_cases.emplace_back(new test_rope(type, { 64,   8, 10, 1},  64, 2, 512)); // neox (falcon 40B)
-        test_cases.emplace_back(new test_rope(type, { 64, 128, 10, 1},  64, 2, 512)); // neox (falcon 40B)
-        test_cases.emplace_back(new test_rope(type, { 80,  32, 10, 1},  20, 2, 512)); // neox (stablelm)
-        test_cases.emplace_back(new test_rope(type, { 80,  32, 10, 1},  32, 2, 512)); // neox (phi-2)
     }
 
     for (int v : { 0, 1, 2, 3 }) {
@@ -2407,12 +2371,6 @@ static bool test_backend(ggml_backend_t backend, test_mode mode, const char * op
                 }
             }
         }
-
-    for (float bias_max : {-0.5, 0.5}) {
-        test_cases.emplace_back(new test_alibi(GGML_TYPE_F32, {16, 2, 10, 1}, 0, 10, bias_max));
-        test_cases.emplace_back(new test_alibi(GGML_TYPE_F32, {16, 2, 32, 1}, 0, 32, bias_max));
-        test_cases.emplace_back(new test_alibi(GGML_TYPE_F32, {128, 4, 10, 1}, 0, 10, bias_max));
-        test_cases.emplace_back(new test_alibi(GGML_TYPE_F32, {128, 4, 32, 1}, 0, 32, bias_max));
     }
 
     // these tests are disabled to save execution time, but they can be handy for debugging

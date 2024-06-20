@@ -122,7 +122,6 @@ GGML_CALL static void ggml_backend_cann_transform_q4_0(ggml_tensor* tensor,
                                                        void* dst) {
     GGML_ASSERT(tensor->op == GGML_OP_NONE);
 
-    size_t n_bytes = ggml_nbytes(tensor);
     int64_t n_elems = ggml_nelements(tensor);
     int64_t groups = n_elems / QK4_0;
     size_t quant_bytes = n_elems * sizeof(uint8_t) / 2;
@@ -131,7 +130,7 @@ GGML_CALL static void ggml_backend_cann_transform_q4_0(ggml_tensor* tensor,
     uint16_t* scale_offset = (uint16_t*)((char*)dst + quant_bytes);
 
     for (int i = 0; i < groups; i++) {
-        block_q4_0* group = (block_q4_0*)((char*)src + i * sizeof(block_q4_0));
+        const block_q4_0* group = (const block_q4_0*)((const char*)src + i * sizeof(block_q4_0));
         *scale_offset = group->d;
         scale_offset++;
 
@@ -161,7 +160,6 @@ GGML_CALL static void ggml_backend_cann_transform_back_q4_0(
     const ggml_tensor* tensor, void* src, void* dst) {
     GGML_ASSERT(tensor->op == GGML_OP_NONE);
 
-    size_t n_bytes = ggml_nbytes(tensor);
     int64_t n_elems = ggml_nelements(tensor);
     int64_t groups = n_elems / QK4_0;
     size_t quant_bytes = n_elems * sizeof(uint8_t) / 2;
@@ -198,7 +196,6 @@ GGML_CALL static void ggml_backend_cann_transform_back_q4_0(
 GGML_CALL static void ggml_backend_cann_transform_q8_0(ggml_tensor* tensor,
                                                        const void* src,
                                                        void* dst) {
-    size_t n_bytes = ggml_nbytes(tensor);
     int64_t n_elems = ggml_nelements(tensor);
     int64_t groups = n_elems / QK8_0;
     size_t quant_bytes = n_elems * sizeof(uint8_t);
@@ -207,7 +204,7 @@ GGML_CALL static void ggml_backend_cann_transform_q8_0(ggml_tensor* tensor,
     uint16_t* scale_offset = (uint16_t*)((char*)dst + quant_bytes);
 
     for (int i = 0; i < groups; i++) {
-        block_q8_0* group = (block_q8_0*)((char*)src + i * sizeof(block_q8_0));
+        const block_q8_0* group = (const block_q8_0*)((const char*)src + i * sizeof(block_q8_0));
         *scale_offset = group->d;
         scale_offset++;
         size_t group_quant_size = QK8_0 * sizeof(uint8_t);
@@ -218,13 +215,12 @@ GGML_CALL static void ggml_backend_cann_transform_q8_0(ggml_tensor* tensor,
 
 GGML_CALL static void ggml_backend_cann_transform_back_q8_0(
     const ggml_tensor* tensor, const void* src, void* dst) {
-    size_t n_bytes = ggml_nbytes(tensor);
     int64_t n_elems = ggml_nelements(tensor);
     int64_t groups = n_elems / QK8_0;
     size_t quant_bytes = n_elems * sizeof(uint8_t);
 
-    uint8_t* quant_offset = (uint8_t*)src;
-    uint16_t* scale_offset = (uint16_t*)((char*)src + quant_bytes);
+    const uint8_t* quant_offset = (const uint8_t*)src;
+    const uint16_t* scale_offset = (const uint16_t*)((const char*)src + quant_bytes);
 
     for (int i = 0; i < groups; i++) {
         block_q8_0* group = (block_q8_0*)((char*)dst + i * sizeof(block_q8_0));
@@ -292,12 +288,9 @@ GGML_CALL static void ggml_backend_cann_buffer_init_tensor(
     ggml_backend_buffer_t buffer, ggml_tensor* tensor) {
     if (tensor->view_src != NULL && tensor->view_offs == 0) {
         GGML_ASSERT(tensor->view_src->buffer->buft == buffer->buft);
-        tensor->backend = tensor->view_src->backend;
         set_tensor_extra(buffer, tensor);
         return;
     }
-
-    tensor->backend = GGML_BACKEND_TYPE_GPU;
 
     // TODO: can backend doesn't support quantized yet. Just leave the code
     // here.
@@ -320,7 +313,6 @@ GGML_CALL static void ggml_backend_cann_buffer_init_tensor(
 GGML_CALL static void ggml_backend_cann_buffer_set_tensor(
     ggml_backend_buffer_t buffer, ggml_tensor* tensor, const void* data,
     size_t offset, size_t size) {
-    GGML_ASSERT(tensor->backend == GGML_BACKEND_TYPE_GPU);
     GGML_ASSERT(size == ggml_nbytes(tensor));
     ggml_backend_cann_buffer_context* ctx =
         (ggml_backend_cann_buffer_context*)buffer->context;
@@ -331,18 +323,18 @@ GGML_CALL static void ggml_backend_cann_buffer_set_tensor(
     // Why aclrtSynchronizeDevice?
 
     if (!need_transform(tensor->type)) {
-        ACL_CHECK(aclrtMemcpy(tensor->data, size, (char*)data + offset, size,
+        ACL_CHECK(aclrtMemcpy(tensor->data, size, (const char*)data + offset, size,
                               ACL_MEMCPY_HOST_TO_DEVICE));
     } else {
         void* transform_buffer = malloc(size);
-        ggml_backend_cann_transform(tensor, (char*)data + offset,
+        ggml_backend_cann_transform(tensor, (const char*)data + offset,
                                     transform_buffer);
 
 #ifndef NDEBUG
         void* check_buffer = malloc(size);
         ggml_backend_cann_transform_back(tensor, transform_buffer,
                                          check_buffer);
-        GGML_ASSERT(memcmp((char*)data + offset, check_buffer, size) == 0);
+        GGML_ASSERT(memcmp((const char*)data + offset, check_buffer, size) == 0);
         free(check_buffer);
 #endif
         ACL_CHECK(aclrtMemcpy(tensor->data, size, transform_buffer, size,
@@ -355,7 +347,6 @@ GGML_CALL static void ggml_backend_cann_buffer_get_tensor(
     ggml_backend_buffer_t buffer, const ggml_tensor* tensor, void* data,
     size_t offset, size_t size) {
     GGML_ASSERT(size == ggml_nbytes(tensor));
-    GGML_ASSERT(tensor->backend == GGML_BACKEND_TYPE_GPU);
     ggml_backend_cann_buffer_context* ctx =
         (ggml_backend_cann_buffer_context*)buffer->context;
 
@@ -377,8 +368,6 @@ GGML_CALL static void ggml_backend_cann_buffer_get_tensor(
 GGML_CALL static bool ggml_backend_cann_buffer_cpy_tensor(
     ggml_backend_buffer_t buffer, const ggml_tensor* src, ggml_tensor* dst) {
     if (ggml_backend_buffer_is_cann(src->buffer)) {
-        GGML_ASSERT(src->backend == GGML_BACKEND_TYPE_GPU);
-        GGML_ASSERT(dst->backend == GGML_BACKEND_TYPE_GPU);
         ggml_backend_cann_buffer_context* src_ctx =
             (ggml_backend_cann_buffer_context*)src->buffer->context;
         ggml_backend_cann_buffer_context* dst_ctx =
@@ -505,27 +494,12 @@ GGML_CALL static size_t ggml_backend_cann_buffer_type_get_alloc_size(
     GGML_UNUSED(buft);
 }
 
-GGML_CALL static bool ggml_backend_cann_buffer_type_supports_backend(
-    ggml_backend_buffer_type_t buft, ggml_backend_t backend) {
-    if (!ggml_backend_is_cann(backend)) {
-        return false;
-    }
-
-    ggml_backend_cann_buffer_type_context* buft_ctx =
-        (ggml_backend_cann_buffer_type_context*)buft->context;
-    ggml_backend_cann_context* cann_ctx =
-        (ggml_backend_cann_context*)backend->context;
-
-    return buft_ctx->device == cann_ctx->device;
-}
-
 static ggml_backend_buffer_type_i ggml_backend_cann_buffer_type_interface = {
     /* .get_name         = */ ggml_backend_cann_buffer_type_name,
     /* .alloc_buffer     = */ ggml_backend_cann_buffer_type_alloc_buffer,
     /* .get_alignment    = */ ggml_backend_cann_buffer_type_get_alignment,
     /* .get_max_size     = */ NULL,  // defaults to SIZE_MAX
     /* .get_alloc_size   = */ ggml_backend_cann_buffer_type_get_alloc_size,
-    /* .supports_backend = */ ggml_backend_cann_buffer_type_supports_backend,
     /* .is_host          = */ NULL,
 };
 
@@ -680,9 +654,6 @@ static bool ggml_cann_compute_forward(ggml_backend_cann_context& ctx,
         case GGML_OP_ROPE:
             ggml_cann_rope(ctx, dst);
             break;
-        case GGML_OP_ALIBI:
-            ggml_cann_alibi(ctx, dst);
-            break;
         case GGML_OP_IM2COL:
             ggml_cann_im2col(ctx, dst);
             break;
@@ -695,6 +666,8 @@ static bool ggml_cann_compute_forward(ggml_backend_cann_context& ctx,
         case GGML_OP_ARGSORT:
             ggml_cann_argsort(ctx, dst);
             break;
+        case GGML_OP_FLASH_ATTN_EXT:
+            return false;
         default:
             return false;
     }
@@ -733,7 +706,6 @@ GGML_CALL static void ggml_backend_cann_set_tensor_async(ggml_backend_t backend,
                                                          const void* data,
                                                          size_t offset,
                                                          size_t size) {
-    GGML_ASSERT(tensor->backend == GGML_BACKEND_TYPE_GPU);
     ggml_backend_cann_context* cann_ctx =
         (ggml_backend_cann_context*)backend->context;
     ggml_backend_buffer_t buf =
@@ -766,7 +738,6 @@ GGML_CALL static void ggml_backend_cann_set_tensor_async(ggml_backend_t backend,
 GGML_CALL static void ggml_backend_cann_get_tensor_async(
     ggml_backend_t backend, const ggml_tensor* tensor, void* data,
     size_t offset, size_t size) {
-    GGML_ASSERT(tensor->backend == GGML_BACKEND_TYPE_GPU);
     ggml_backend_cann_context* cann_ctx =
         (ggml_backend_cann_context*)backend->context;
     ggml_backend_buffer_t buf =
@@ -801,9 +772,6 @@ GGML_CALL static bool ggml_backend_cann_cpy_tensor_async(
         !ggml_backend_buffer_is_cann(dst->buffer)) {
         return false;
     }
-
-    GGML_ASSERT(src->backend == GGML_BACKEND_TYPE_GPU);
-    GGML_ASSERT(dst->backend == GGML_BACKEND_TYPE_GPU);
 
     ggml_backend_buffer_t buf_src =
         src->view_src ? src->view_src->buffer : src->buffer;
@@ -975,7 +943,6 @@ GGML_CALL static bool ggml_backend_cann_supports_op(ggml_backend_t backend,
         case GGML_OP_DIAG_MASK_INF:
         case GGML_OP_SOFT_MAX:
         case GGML_OP_ROPE:
-        case GGML_OP_ALIBI:
         case GGML_OP_IM2COL:
         case GGML_OP_POOL_2D:
         case GGML_OP_SUM_ROWS:
@@ -988,6 +955,8 @@ GGML_CALL static bool ggml_backend_cann_supports_op(ggml_backend_t backend,
         case GGML_OP_TIMESTEP_EMBEDDING:
         case GGML_OP_LEAKY_RELU:
             return true;
+        case GGML_OP_FLASH_ATTN_EXT:
+            return false;
         default:
             return false;
     }
@@ -995,12 +964,18 @@ GGML_CALL static bool ggml_backend_cann_supports_op(ggml_backend_t backend,
     GGML_UNUSED(backend);
 }
 
-GGML_CALL static bool ggml_backend_cann_offload_op(ggml_backend_t backend,
-                                                   const ggml_tensor* op) {
-    const int min_batch_size = 32;
-    GGML_UNUSED(backend);
+static bool ggml_backend_buft_is_cann(ggml_backend_buffer_type_t buft) {
+    return buft->iface.get_name == ggml_backend_cann_buffer_type_name;
+}
 
-    return op->ne[1] >= min_batch_size && op->op != GGML_OP_GET_ROWS;
+GGML_CALL static bool ggml_backend_cann_supports_buft(ggml_backend_t backend, ggml_backend_buffer_type_t buft) {
+    if (ggml_backend_buft_is_cann(buft)) {
+        ggml_backend_cann_context * cann_ctx = (ggml_backend_cann_context *)backend->context;
+        ggml_backend_cann_buffer_type_context * buft_ctx = (ggml_backend_cann_buffer_type_context *)buft->context;
+        return buft_ctx->device == cann_ctx->device;
+    }
+
+    return false;
 }
 
 static ggml_backend_event_t ggml_backend_cann_event_new(
@@ -1059,9 +1034,11 @@ static ggml_backend_i ggml_backend_cann_interface = {
     /* .synchronize             = */ ggml_backend_cann_synchronize,
     /* .graph_plan_create       = */ NULL,
     /* .graph_plan_free         = */ NULL,
+    /* .graph_plan_update       = */ NULL,
     /* .graph_plan_compute      = */ NULL,
     /* .graph_compute           = */ ggml_backend_cann_graph_compute,
     /* .supports_op             = */ ggml_backend_cann_supports_op,
+    /* .supports_buft           = */ ggml_backend_cann_supports_buft,
     /* .offload_op              = */ NULL,
     /* .event_new               = */ ggml_backend_cann_event_new,
     /* .event_free              = */ ggml_backend_cann_event_free,

@@ -67,8 +67,6 @@ void ggml_cann_im2col(ggml_backend_cann_context& ctx, ggml_tensor* dst);
 void ggml_cann_timestep_embedding(ggml_backend_cann_context& ctx,
                                   ggml_tensor* dst);
 
-void ggml_cann_alibi(ggml_backend_cann_context& ctx, ggml_tensor* dst);
-
 void ggml_cann_cpy(ggml_backend_cann_context& ctx, ggml_tensor* dst);
 
 void ggml_cann_mul_mat(ggml_backend_cann_context& ctx, ggml_tensor* dst);
