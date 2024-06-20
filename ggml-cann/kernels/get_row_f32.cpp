@@ -55,15 +55,15 @@ class GET_ROW_F32 {
 
     __aicore__ inline void copy_in(uint32_t offset, size_t len) {
         LocalTensor<float> input_local = input_queue.AllocTensor<float>();
-        size_t tail = len % 32; 
+        size_t tail = len % 32;
         len = len & ~31;
         DataCopy(input_local, input_gm[offset], len);
-        if(tail != 0) {
+        if (tail != 0) {
             DataCopyExtParams dataCopyParams;
             dataCopyParams.blockCount = 1;
             dataCopyParams.blockLen = tail * sizeof(float);
             DataCopyPadExtParams<float> padParams;
-            DataCopyPad(input_local[len], input_gm[offset + len], 
+            DataCopyPad(input_local[len], input_gm[offset + len],
                         dataCopyParams, padParams);
         }
         input_queue.EnQue(input_local);
@@ -71,19 +71,19 @@ class GET_ROW_F32 {
 
     __aicore__ inline void copy_out(uint32_t offset, size_t len) {
         LocalTensor<float> output_local = output_queue.DeQue<float>();
-        size_t tail = len % 32; 
+        size_t tail = len % 32;
         len = len & ~31;
         DataCopy(output_gm[offset], output_local, len);
-        if(tail != 0) {
+        if (tail != 0) {
             DataCopyExtParams dataCopyParams;
             dataCopyParams.blockCount = 1;
             dataCopyParams.blockLen = tail * sizeof(float);
-            DataCopyPad(output_gm[offset + len], output_local[len], 
+            DataCopyPad(output_gm[offset + len], output_local[len],
                         dataCopyParams);
         }
         output_queue.FreeTensor(output_local);
     }
-    
+
     __aicore__ inline void calculate_row(int64_t idx) {
         const int64_t indices_ne2_idx = idx / (indices_ne[0] * indices_ne[1]);
         const int64_t indices_ne1_idx =
@@ -109,7 +109,7 @@ class GET_ROW_F32 {
         copy_in(input_offset, input_ne[0]);
         LocalTensor<float> input_local = input_queue.DeQue<float>();
         LocalTensor<float> output_local = output_queue.AllocTensor<float>();
-        
+
         DataCopy(output_local, input_local, local_buffer_elems);
         output_queue.EnQue(output_local);
         copy_out(output_offset, input_ne[0]);

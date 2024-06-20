@@ -45,10 +45,10 @@ class GET_ROW_F16 {
         indices_gm.SetGlobalBuffer((__gm__ int32_t *)indices);
         output_gm.SetGlobalBuffer((__gm__ float *)output);
 
-        uint64_t input_local_buffer_size = ((input_ne[0] * sizeof(half) + 31)
-                                             & ~31);
-        uint64_t output_local_buffer_size = ((input_ne[0] * sizeof(float) + 31)
-                                              & ~31);
+        uint64_t input_local_buffer_size =
+            ((input_ne[0] * sizeof(half) + 31) & ~31);
+        uint64_t output_local_buffer_size =
+            ((input_ne[0] * sizeof(float) + 31) & ~31);
 
         local_buffer_elems = input_local_buffer_size / sizeof(half);
 
@@ -60,15 +60,15 @@ class GET_ROW_F16 {
 
     __aicore__ inline void copy_in(uint32_t offset, size_t len) {
         LocalTensor<half> input_local = input_queue.AllocTensor<half>();
-        size_t tail = len % 32; 
+        size_t tail = len % 32;
         len = len & ~31;
         DataCopy(input_local, input_gm[offset], len);
-        if(tail != 0) {
+        if (tail != 0) {
             DataCopyExtParams dataCopyParams;
             dataCopyParams.blockCount = 1;
             dataCopyParams.blockLen = tail * sizeof(half);
             DataCopyPadExtParams<half> padParams;
-            DataCopyPad(input_local[len], input_gm[offset + len], 
+            DataCopyPad(input_local[len], input_gm[offset + len],
                         dataCopyParams, padParams);
         }
         input_queue.EnQue(input_local);
@@ -76,19 +76,19 @@ class GET_ROW_F16 {
 
     __aicore__ inline void copy_out(uint32_t offset, size_t len) {
         LocalTensor<float> output_local = output_queue.DeQue<float>();
-        size_t tail = len % 32; 
+        size_t tail = len % 32;
         len = len & ~31;
         DataCopy(output_gm[offset], output_local, len);
-        if(tail != 0) {
+        if (tail != 0) {
             DataCopyExtParams dataCopyParams;
             dataCopyParams.blockCount = 1;
             dataCopyParams.blockLen = tail * sizeof(float);
-            DataCopyPad(output_gm[offset + len], output_local[len], 
+            DataCopyPad(output_gm[offset + len], output_local[len],
                         dataCopyParams);
         }
         output_queue.FreeTensor(output_local);
     }
-    
+
     __aicore__ inline void calculate_row(int64_t idx) {
         const int64_t indices_ne2_idx = idx / (indices_ne[0] * indices_ne[1]);
         const int64_t indices_ne1_idx =
@@ -114,8 +114,8 @@ class GET_ROW_F16 {
         copy_in(input_offset, input_ne[0]);
         LocalTensor<half> input_local = input_queue.DeQue<half>();
         LocalTensor<float> output_local = output_queue.AllocTensor<float>();
-        
-        Cast(output_local, input_local, RoundMode::CAST_NONE, 
+
+        Cast(output_local, input_local, RoundMode::CAST_NONE,
              local_buffer_elems);
         output_queue.EnQue(output_local);
         copy_out(output_offset, input_ne[0]);

@@ -13,15 +13,14 @@ extern "C" {
 
 #define QK4_0 32
 typedef struct {
-    uint16_t d;           // delta
-    uint8_t qs[QK4_0 / 2]; // nibbles / quants
+    uint16_t d;             // delta
+    uint8_t qs[QK4_0 / 2];  // nibbles / quants
 } block_q4_0;
-
 
 #define QK8_0 32
 typedef struct {
-    uint16_t d;       // delta
-    int8_t  qs[QK8_0]; // quants
+    uint16_t d;        // delta
+    int8_t qs[QK8_0];  // quants
 } block_q8_0;
 
 // backend API

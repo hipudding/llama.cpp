@@ -11,4 +11,4 @@ typedef struct {
 } dup_param;
 #pragma pack(pop)
 
-#endif //DUP_H
+#endif  // DUP_H

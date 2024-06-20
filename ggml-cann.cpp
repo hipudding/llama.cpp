@@ -169,7 +169,7 @@ GGML_CALL static void ggml_backend_cann_transform_back_q4_0(
     uint8_t* quant_offset = (uint8_t*)src;
     uint16_t* scale_offset = (uint16_t*)((char*)src + quant_bytes);
 
-    for (;quant_offset < (uint8_t*)src + quant_bytes; quant_offset++) {
+    for (; quant_offset < (uint8_t*)src + quant_bytes; quant_offset++) {
         (*quant_offset) ^= 0x88;
     }
     quant_offset = (uint8_t*)src;
@@ -895,7 +895,7 @@ GGML_CALL static enum ggml_status ggml_backend_cann_graph_compute(
             fprintf(stderr, "%s: error: op not supported %s (%s)\n", __func__,
                     node->name, ggml_op_name(node->op));
         }
-        // if not synchronize, aclrtSynchronizeStream in 
+        // if not synchronize, aclrtSynchronizeStream in
         // ggml_backend_cann_synchronize() will raise error.
         ACL_CHECK(aclrtSynchronizeStream(cann_ctx->stream()));
         GGML_ASSERT(ok);

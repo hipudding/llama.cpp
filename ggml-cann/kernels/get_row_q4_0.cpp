@@ -38,8 +38,8 @@ class GET_ROW_Q4_0 {
         }
 
         group_size_in_row = input_ne[0] / QK4_0;
-        int64_t scale_offset = input_ne[0] * input_ne[1] * input_ne[2] *
-                               input_ne[3] / 2;
+        int64_t scale_offset =
+            input_ne[0] * input_ne[1] * input_ne[2] * input_ne[3] / 2;
 
         // Indices has two dims. n_elements = all rows should get.
         // dr, all rows should this thread get.

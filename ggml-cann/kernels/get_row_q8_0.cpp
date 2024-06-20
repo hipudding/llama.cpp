@@ -188,4 +188,4 @@ extern "C" __global__ __aicore__ void ascendc_get_row_q8_0(
     op.init(input_gm, indices_gm, output_gm, input_ne_ub, indices_ne_ub,
             indices_nb_ub, output_ne_ub, output_nb_ub);
     op.calculate();
-} 
+}

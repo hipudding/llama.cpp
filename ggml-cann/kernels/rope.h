@@ -16,4 +16,4 @@ typedef struct {
 } rope_param;
 #pragma pack(pop)
 
-#endif //ROPE_H
+#endif  // ROPE_H

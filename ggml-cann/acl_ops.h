@@ -38,7 +38,7 @@ struct OpCaller {
     OpCaller& attr(float value, const char* name);
 
     template <typename T>
-    OpCaller& input(ggml_backend_cann_context& ctx, ggml_tensor *dst, T* values,
+    OpCaller& input(ggml_backend_cann_context& ctx, ggml_tensor* dst, T* values,
                     aclDataType dtype, size_t dims, int64_t* dim,
                     const char* name, aclrtStream stream = nullptr) {
         size_t n_elem = 1;
