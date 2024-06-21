@@ -1643,7 +1643,6 @@ static void aclnn_inplace_add(ggml_backend_cann_context& ctx, aclTensor* acl_src
 void ggml_cann_softmax(ggml_backend_cann_context& ctx, ggml_tensor* dst) {
     ggml_tensor* src0 = dst->src[0];
     ggml_tensor* src1 = dst->src[1];  // mask
-    ggml_tensor* src2 = dst->src[2];  // pos
 
     aclTensor* acl_src0 = create_acl_tensor(src0);
     aclTensor* acl_dst = create_acl_tensor(dst);

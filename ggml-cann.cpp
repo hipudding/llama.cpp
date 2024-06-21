@@ -288,9 +288,12 @@ GGML_CALL static void ggml_backend_cann_buffer_init_tensor(
     ggml_backend_buffer_t buffer, ggml_tensor* tensor) {
     if (tensor->view_src != NULL && tensor->view_offs == 0) {
         GGML_ASSERT(tensor->view_src->buffer->buft == buffer->buft);
+        tensor->backend = tensor->view_src->backend;
         set_tensor_extra(buffer, tensor);
         return;
     }
+
+    tensor->backend = GGML_BACKEND_TYPE_GPU;
 
     // TODO: can backend doesn't support quantized yet. Just leave the code
     // here.
@@ -686,6 +689,7 @@ GGML_CALL static const char* ggml_backend_cann_name(ggml_backend_t backend) {
 GGML_CALL static void ggml_backend_cann_free(ggml_backend_t backend) {
     ggml_backend_cann_context* cann_ctx =
         (ggml_backend_cann_context*)backend->context;
+    ggml_cann_set_device(cann_ctx->device);
     ACL_CHECK(aclrtSynchronizeDevice());
     cann_ctx->free_device_buffers();
     ACL_CHECK(aclrtResetDevice(cann_ctx->device));
@@ -708,23 +712,21 @@ GGML_CALL static void ggml_backend_cann_set_tensor_async(ggml_backend_t backend,
                                                          size_t size) {
     ggml_backend_cann_context* cann_ctx =
         (ggml_backend_cann_context*)backend->context;
-    ggml_backend_buffer_t buf =
-        tensor->view_src ? tensor->view_src->buffer : tensor->buffer;
 
     if (!need_transform(tensor->type)) {
-        ACL_CHECK(aclrtMemcpyAsync(tensor->data, size, (char*)data + offset,
+        ACL_CHECK(aclrtMemcpyAsync(tensor->data, size, (const char*)data + offset,
                                    size, ACL_MEMCPY_HOST_TO_DEVICE,
                                    cann_ctx->stream()));
     } else {
         void* transform_buffer = malloc(size);
-        ggml_backend_cann_transform(tensor, (char*)data + offset,
+        ggml_backend_cann_transform(tensor, (const char*)data + offset,
                                     transform_buffer);
 
 #ifndef NDEBUG
         void* check_buffer = malloc(size);
         ggml_backend_cann_transform_back(tensor, transform_buffer,
                                          check_buffer);
-        GGML_ASSERT(memcmp((char*)data + offset, check_buffer, size));
+        GGML_ASSERT(memcmp((const char*)data + offset, check_buffer, size));
         free(check_buffer);
 #endif
         ACL_CHECK(aclrtMemcpyAsync(tensor->data, size, transform_buffer, size,
