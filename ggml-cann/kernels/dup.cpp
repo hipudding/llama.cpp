@@ -141,7 +141,7 @@ extern "C" __global__ __aicore__ void ascendc_dup_by_rows_fp16(GM_ADDR src_gm,
     auto param_gm_ptr = (__gm__ uint8_t *)param;
     auto param_ub_ptr = (uint8_t *)&param_ub;
 
-    for (int32_t i = 0; i < sizeof(dup_param) / sizeof(uint8_t);
+    for (int32_t i = 0; i < static_cast<int32_t>(sizeof(dup_param) / sizeof(uint8_t));
          ++i, ++param_gm_ptr, ++param_ub_ptr) {
         *param_ub_ptr = *param_gm_ptr;
     }
@@ -159,7 +159,7 @@ extern "C" __global__ __aicore__ void ascendc_dup_by_rows_fp32(GM_ADDR src_gm,
     auto param_gm_ptr = (__gm__ uint8_t *)param;
     auto param_ub_ptr = (uint8_t *)&param_ub;
 
-    for (int32_t i = 0; i < sizeof(dup_param) / sizeof(uint8_t);
+    for (int32_t i = 0; i < static_cast<int32_t>(sizeof(dup_param) / sizeof(uint8_t));
          ++i, ++param_gm_ptr, ++param_ub_ptr) {
         *param_ub_ptr = *param_gm_ptr;
     }
@@ -176,7 +176,7 @@ extern "C" __global__ __aicore__ void ascendc_dup_by_rows_fp32_to_fp16(
     auto param_gm_ptr = (__gm__ uint8_t *)param;
     auto param_ub_ptr = (uint8_t *)&param_ub;
 
-    for (int32_t i = 0; i < sizeof(dup_param) / sizeof(uint8_t);
+    for (int32_t i = 0; i < static_cast<int32_t>(sizeof(dup_param) / sizeof(uint8_t));
          ++i, ++param_gm_ptr, ++param_ub_ptr) {
         *param_ub_ptr = *param_gm_ptr;
     }
@@ -193,7 +193,7 @@ extern "C" __global__ __aicore__ void ascendc_dup_by_rows_fp16_to_fp32(
     auto param_gm_ptr = (__gm__ uint8_t *)param;
     auto param_ub_ptr = (uint8_t *)&param_ub;
 
-    for (int32_t i = 0; i < sizeof(dup_param) / sizeof(uint8_t);
+    for (int32_t i = 0; i < static_cast<int32_t>(sizeof(dup_param) / sizeof(uint8_t));
          ++i, ++param_gm_ptr, ++param_ub_ptr) {
         *param_ub_ptr = *param_gm_ptr;
     }

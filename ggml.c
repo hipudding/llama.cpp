@@ -13723,10 +13723,6 @@ static void ggml_compute_forward_soft_max_f32(
     assert(ggml_is_contiguous(dst));
     assert(ggml_are_same_shape(src0, dst));
 
-    if (params->type == GGML_TASK_TYPE_INIT || params->type == GGML_TASK_TYPE_FINALIZE) {
-        return;
-    }
-
     float scale    = 1.0f;
     float max_bias = 0.0f;
 
@@ -13832,6 +13828,7 @@ static void ggml_compute_forward_soft_max(
             } break;
     }
 }
+
 
 // ggml_compute_forward_soft_max_back
 

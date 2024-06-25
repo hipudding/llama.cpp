@@ -7265,14 +7265,13 @@ static struct ggml_tensor * llm_build_kqv(
 
             //try from phi2
             //ggml_mul_mat_set_prec(kq, GGML_PREC_F32);
-
             kq = ggml_tanh(ctx, ggml_scale(ctx, kq, 0.08838834764831845f/30.0f));
             kq = ggml_scale(ctx, kq, 30);
         }
 
         kq = ggml_soft_max_ext(ctx, kq, kq_mask, kq_scale, hparams.f_max_alibi_bias);
         cb(kq, "kq_soft_max_ext", il);
-
+        
         GGML_ASSERT(kv.size == n_ctx);
 
         // split cached v into n_head heads

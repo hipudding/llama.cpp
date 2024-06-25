@@ -5,23 +5,28 @@
 
 using namespace AscendC;
 
-#define BUFFER_NUM 2
+#define BUFFER_NUM 1
 
 class InitCache {
    public:
     __aicore__ inline InitCache() {}
-    __aicore__ inline void init(GM_ADDR position, GM_ADDR sin_output,
-                                GM_ADDR cos_output, rope_param& param) {
+    __aicore__ inline void init(GM_ADDR position,
+                                GM_ADDR sin_output,
+                                GM_ADDR cos_output,
+                                rope_param& param,
+                                int64_t* input_ne_ub) {
         /*Init sin&cos cache for rope, impl of ggml_compute_forward_rope_f32().
         each kernel process input_ne[0]*1 cache.
         */
+
         // Input has four dims. [batch, seq_len, heads, head_dim].
         int64_t op_block_num = GetBlockNum();
         int64_t op_block_idx = GetBlockIdx();
 
         // arange param
         // head_dim = param.input_ne[0];
-        head_dim = param.input_ne[0];
+        // head_dim = param.input_ne[0];
+        head_dim = input_ne_ub[0];
         first_value = 0;
         diff_value = 1;
         count = head_dim / 2;
@@ -36,7 +41,7 @@ class InitCache {
         broadcast_shape0[0] = count;
         broadcast_shape0[1] = 2;
 
-        // arange_shape1: [1, count_] -> broadcast_shape2: [2, count_]
+        // arange_shape1: [1, count] -> broadcast_shape2: [2, count]
         arange_shape1[0] = 1;
         arange_shape1[1] = count;
         broadcast_shape2[0] = 2;
@@ -60,29 +65,31 @@ class InitCache {
 
         // stride
         position_stride = op_block_idx;
-        sin_output_stride = op_block_idx * broadcast_size;
+        output_stride = op_block_idx * broadcast_size;
 
-        position_gm.SetGlobalBuffer((__gm__ float_t*)position +
-                                    position_stride);
-        output_sin_gm.SetGlobalBuffer((__gm__ float_t*)sin_output +
-                                      sin_output_stride);
-        output_cos_gm.SetGlobalBuffer((__gm__ float_t*)cos_output +
-                                      sin_output_stride);
-
-        pipe.InitBuffer(power_queue, BUFFER_NUM,
-                        (sizeof(float_t) * count + 32 - 1) / 32 * 32);
-        pipe.InitBuffer(position_queue, BUFFER_NUM,
-                        (sizeof(float_t) * position_size + 32 - 1) / 32 * 32);
-        pipe.InitBuffer(arange_queue, BUFFER_NUM,
-                        (sizeof(float_t) * count + 32 - 1) / 32 * 32);
-        pipe.InitBuffer(sin_mul_mscale_queue, BUFFER_NUM,
-                        (sizeof(float_t) * broadcast_size + 32 - 1) / 32 * 32);
-        pipe.InitBuffer(cos_mul_mscale_queue, BUFFER_NUM,
-                        (sizeof(float_t) * broadcast_size + 32 - 1) / 32 * 32);
-        pipe.InitBuffer(broadcast_power_buffer,
-                        (sizeof(float_t) * count + 32 - 1) / 32 * 32);
-        pipe.InitBuffer(theta_buffer,
-                        (sizeof(float_t) * broadcast_size + 32 - 1) / 32 * 32);
+        position_gm.SetGlobalBuffer((__gm__ float_t*)position + position_stride, 
+                                    1);
+        output_sin_gm.SetGlobalBuffer((__gm__ float_t*)sin_output + 
+                                                        output_stride, 
+                                                       broadcast_size);
+        output_cos_gm.SetGlobalBuffer((__gm__ float_t*)cos_output + 
+                                                        output_stride, 
+                                                       broadcast_size);
+        
+        pipe.InitBuffer(power_queue, BUFFER_NUM, 
+                        (sizeof(float_t)*count+32-1)/32*32);
+        pipe.InitBuffer(position_queue, BUFFER_NUM, 
+                        (sizeof(float_t)*position_size+32-1)/32*32);
+        pipe.InitBuffer(arange_queue, BUFFER_NUM, 
+                        (sizeof(float_t)*count+32-1)/32*32);
+        pipe.InitBuffer(sin_mul_mscale_queue, BUFFER_NUM, 
+                        (sizeof(float_t)*broadcast_size+32-1)/32*32);
+        pipe.InitBuffer(cos_mul_mscale_queue, BUFFER_NUM, 
+                        (sizeof(float_t)*broadcast_size+32-1)/32*32);
+        pipe.InitBuffer(broadcast_power_buffer, 
+                        (sizeof(float_t)*broadcast_size+32-1)/32*32);
+        pipe.InitBuffer(theta_buffer, 
+                        (sizeof(float_t)*broadcast_size+32-1)/32*32);
         pipe.InitBuffer(sin_buffer,
                         (sizeof(float_t) * broadcast_size + 32 - 1) / 32 * 32);
         pipe.InitBuffer(cos_buffer,
@@ -90,12 +97,9 @@ class InitCache {
     }
 
     __aicore__ inline void copy_in() {
-        LocalTensor<float_t> input_local =
-            position_queue.AllocTensor<float_t>();
-        // int32_t BLOCK_NUM = 32 / sizeof(float_t);
-        // DataCopy(input_local, position_gm, (position_size + BLOCK_NUM - 1)
-        //                                     / BLOCK_NUM * BLOCK_NUM);
-
+        LocalTensor<float_t> input_local = 
+                                        position_queue.AllocTensor<float_t>();
+        
         DataCopyExtParams dataCopyParams;
         dataCopyParams.blockCount = 1;
         dataCopyParams.blockLen = position_size * sizeof(float_t);
@@ -183,13 +187,9 @@ class InitCache {
             cos_mul_mscale_queue.AllocTensor<float_t>();
         Muls(cos_mul_mscale_local, cos_local, attn_factor, broadcast_size);
 
-        // release
+        // release, VECCALC not need.
         arange_queue.FreeTensor(arange_local);
         power_queue.FreeTensor(power_local);
-        broadcast_power_buffer.FreeTensor(power_brcast_local);
-        theta_buffer.FreeTensor(theta_local);
-        sin_buffer.FreeTensor(sin_local);
-        cos_buffer.FreeTensor(cos_local);
 
         // output
         sin_mul_mscale_queue.EnQue<float_t>(sin_mul_mscale_local);
@@ -217,7 +217,7 @@ class InitCache {
     int64_t broadcast_size;
     int64_t position_size;
     int64_t position_stride;
-    int64_t sin_output_stride;
+    int64_t output_stride;
     float_t position_value;
 
     TPipe pipe;
@@ -235,20 +235,37 @@ class InitCache {
     TBuf<QuePosition::VECCALC> cos_buffer;
 };
 
+template <typename T>
+__aicore__ inline void copy_to_ub(GM_ADDR gm, T *ub, int32_t size) {
+    auto gm_ptr = (__gm__ uint8_t *)gm;
+    auto ub_ptr = (uint8_t *)(ub);
+    for (int32_t i = 0; i < size; ++i, ++ub_ptr, ++gm_ptr) {
+        *ub_ptr = *gm_ptr;
+    }
+}
+
 extern "C" __global__ __aicore__ void ascendc_rope_init_cache(
-    GM_ADDR position_gm, GM_ADDR output_sin_gm, GM_ADDR output_cos_gm,
-    GM_ADDR param) {
+                                                          GM_ADDR position_gm,
+                                                          GM_ADDR output_sin_gm,
+                                                          GM_ADDR output_cos_gm,
+                                                          GM_ADDR param,
+                                                          GM_ADDR input_ne_gm
+                                                          ) {
     // copy params from gm to ub.
     rope_param param_ub;
     auto param_gm_ptr = (__gm__ uint8_t*)param;
     auto param_ub_ptr = (uint8_t*)&param_ub;
 
-    for (int32_t i = 0; i < sizeof(rope_param) / sizeof(uint8_t);
+    for (int32_t i = 0; i < static_cast<int32_t>(sizeof(rope_param) / sizeof(uint8_t));
          ++i, ++param_gm_ptr, ++param_ub_ptr) {
         *param_ub_ptr = *param_gm_ptr;
     }
 
+    int64_t input_ne_ub[4];
+
+    copy_to_ub(input_ne_gm, input_ne_ub, 32);
+
     InitCache op;
-    op.init(position_gm, output_sin_gm, output_cos_gm, param_ub);
-    op.calculate();
+    op.init(position_gm, output_sin_gm, output_cos_gm, param_ub, input_ne_ub);
+    op.calculate(); 
 }
