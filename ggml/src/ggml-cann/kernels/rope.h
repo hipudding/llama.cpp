@@ -9,12 +9,9 @@ typedef struct {
     int n_dims;
     int n_orig_ctx;
     float theta_scale;
-    float corr_dims0;
-    float corr_dims1;
-    float corr_dims0_neg;
-    float rope_yarn_ramp_max_inv;
+    float corr_dims[2];
     bool is_neox;
-    bool use_freq_factors;
+    bool is_glm;
 
 } rope_param;
 #pragma pack(pop)
