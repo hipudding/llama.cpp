@@ -764,15 +764,6 @@ void ggml_cann_dup(ggml_backend_cann_context& ctx, ggml_tensor* dst) {
 
     aclTensor* acl_src = create_acl_tensor(src);
     aclTensor* acl_dst = create_acl_tensor(dst);    
-    
-    // param
-    dup_param param;
-    for (int i=0; i<4; i++) {
-        param.src_ne[i] = src->ne[i];
-        param.src_nb[i] = src->nb[i];
-        param.dst_ne[i] = dst->ne[i];
-        param.dst_nb[i] = dst->nb[i];
-    }
 
     // TODO: simplefify
     if (src->type==GGML_TYPE_F16) {
@@ -796,17 +787,13 @@ void ggml_cann_dup(ggml_backend_cann_context& ctx, ggml_tensor* dst) {
                     // src0 is contigous on first dimension, copy by rows
                     int64_t rows_num = ggml_nrows(src);
                     
-                    // param copy
-                    void *param_buffer;
-                    ACL_CHECK(aclrtMalloc(&param_buffer, sizeof(dup_param), 
-                                        ACL_MEM_MALLOC_HUGE_FIRST));
-
-                    ACL_CHECK(aclrtMemcpy(param_buffer, sizeof(dup_param), 
-                                          &param, sizeof(dup_param), 
-                                          ACL_MEMCPY_HOST_TO_DEVICE));
-                    aclrtlaunch_ascendc_dup_by_rows_fp16(rows_num, ctx.stream(), 
-                                                         src->data, dst->data, 
-                                                         param_buffer);
+                    aclrtlaunch_ascendc_dup_by_rows_fp16(
+                                                rows_num, ctx.stream(), 
+                                                src->data, dst->data, 
+                                                ((ggml_tensor*)src->extra)->ne,
+                                                ((ggml_tensor*)src->extra)->nb,
+                                                ((ggml_tensor*)dst->extra)->ne,
+                                                ((ggml_tensor*)dst->extra)->nb);
                     return;
                 }
                 GGML_ASSERT(false);
@@ -825,19 +812,13 @@ void ggml_cann_dup(ggml_backend_cann_context& ctx, ggml_tensor* dst) {
                 if (src->nb[0] == src_type_size) {
                     // src0 is contigous on first dimension, copy by rows
                     int64_t rows_num = ggml_nrows(src);
-                    // param copy
-                    void *param_buffer;
-                    ACL_CHECK(aclrtMalloc(&param_buffer, sizeof(dup_param), 
-                                          ACL_MEM_MALLOC_HUGE_FIRST));
-
-                    ACL_CHECK(aclrtMemcpy(param_buffer, sizeof(dup_param), 
-                                          &param, sizeof(dup_param), 
-                                          ACL_MEMCPY_HOST_TO_DEVICE));
-                    aclrtlaunch_ascendc_dup_by_rows_fp16_to_fp32(rows_num, 
-                                                                 ctx.stream(), 
-                                                                 src->data, 
-                                                                 dst->data, 
-                                                                 param_buffer);
+                    aclrtlaunch_ascendc_dup_by_rows_fp16_to_fp32(
+                                                rows_num, ctx.stream(), 
+                                                src->data, dst->data, 
+                                                ((ggml_tensor*)src->extra)->ne,
+                                                ((ggml_tensor*)src->extra)->nb,
+                                                ((ggml_tensor*)dst->extra)->ne,
+                                                ((ggml_tensor*)dst->extra)->nb);
                     return;
                 }
                 GGML_ASSERT(false);
@@ -869,17 +850,13 @@ void ggml_cann_dup(ggml_backend_cann_context& ctx, ggml_tensor* dst) {
                 if (src->nb[0] == src_type_size) {
                     // src0 is contigous on first dimension, copy by rows
                     int64_t rows_num = ggml_nrows(src);
-                    // param copy
-                    void *param_buffer;
-                    ACL_CHECK(aclrtMalloc(&param_buffer, sizeof(dup_param), 
-                                          ACL_MEM_MALLOC_HUGE_FIRST));
-
-                    ACL_CHECK(aclrtMemcpy(param_buffer, sizeof(dup_param), 
-                                          &param, sizeof(dup_param), 
-                                          ACL_MEMCPY_HOST_TO_DEVICE));
-                    aclrtlaunch_ascendc_dup_by_rows_fp32(rows_num, ctx.stream(), 
-                                                         src->data, dst->data, 
-                                                         param_buffer);
+                    aclrtlaunch_ascendc_dup_by_rows_fp32(
+                                                rows_num, ctx.stream(), 
+                                                src->data, dst->data, 
+                                                ((ggml_tensor*)src->extra)->ne,
+                                                ((ggml_tensor*)src->extra)->nb,
+                                                ((ggml_tensor*)dst->extra)->ne,
+                                                ((ggml_tensor*)dst->extra)->nb);
                     return;
                 }
                 GGML_ASSERT(false);
@@ -901,19 +878,13 @@ void ggml_cann_dup(ggml_backend_cann_context& ctx, ggml_tensor* dst) {
                 if (src->nb[0] == src_type_size) {
                     // src0 is contigous on first dimension, copy by rows
                     int64_t rows_num = ggml_nrows(src);
-                    // param copy
-                    void *param_buffer;
-                    ACL_CHECK(aclrtMalloc(&param_buffer, sizeof(dup_param), 
-                                          ACL_MEM_MALLOC_HUGE_FIRST));
-
-                    ACL_CHECK(aclrtMemcpy(param_buffer, sizeof(dup_param),
-                                          &param, sizeof(dup_param), 
-                                          ACL_MEMCPY_HOST_TO_DEVICE));
-                    aclrtlaunch_ascendc_dup_by_rows_fp32_to_fp16(rows_num, 
-                                                                 ctx.stream(), 
-                                                                 src->data, 
-                                                                 dst->data, 
-                                                                 param_buffer);
+                    aclrtlaunch_ascendc_dup_by_rows_fp32_to_fp16(
+                                                rows_num, ctx.stream(), 
+                                                src->data, dst->data, 
+                                                ((ggml_tensor*)src->extra)->ne,
+                                                ((ggml_tensor*)src->extra)->nb,
+                                                ((ggml_tensor*)dst->extra)->ne,
+                                                ((ggml_tensor*)dst->extra)->nb);
                     return;
                 }
                 GGML_ASSERT(false);
@@ -2237,6 +2208,9 @@ void ggml_cann_rope(ggml_backend_cann_context& ctx, ggml_tensor* dst) {
     memcpy(&param.attn_factor, (int32_t *) dst->op_params +  8, sizeof(float));
     memcpy(&param.beta_fast,   (int32_t *) dst->op_params +  9, sizeof(float));
     memcpy(&param.beta_slow,   (int32_t *) dst->op_params + 10, sizeof(float));
+
+    // TODO: ext_factor != 0
+    GGML_ASSERT(param.ext_factor == 0);
     
     param.n_dims = ((int32_t *) dst->op_params)[1];
     param.n_orig_ctx = ((int32_t *) dst->op_params)[4];

@@ -284,6 +284,13 @@ static void set_tensor_extra(ggml_backend_buffer_t buffer,
                           tensor_meta_size, ACL_MEMCPY_HOST_TO_DEVICE));
 }
 
+static void update_tensor_extra(ggml_tensor* tensor) {
+    // when tensor->ne/nb changed, make sure ne/nb in extra data also changed.
+    size_t tensor_meta_size = sizeof(ggml_tensor);
+    ACL_CHECK(aclrtMemcpy(tensor->extra, tensor_meta_size, tensor,
+                        tensor_meta_size, ACL_MEMCPY_HOST_TO_DEVICE));
+}
+
 GGML_CALL static void ggml_backend_cann_buffer_init_tensor(
     ggml_backend_buffer_t buffer, ggml_tensor* tensor) {
     if (tensor->view_src != NULL && tensor->view_offs == 0) {
@@ -643,7 +650,7 @@ static bool ggml_cann_compute_forward(ggml_backend_cann_context& ctx,
         case GGML_OP_VIEW:
         case GGML_OP_PERMUTE:
         case GGML_OP_TRANSPOSE:
-            // Do nothing with these ops.
+            update_tensor_extra(dst);
             break;
         case GGML_OP_DIAG_MASK_INF:
             ggml_cann_diag_mask(ctx, dst, -INFINITY);
@@ -845,9 +852,7 @@ GGML_CALL static enum ggml_status ggml_backend_cann_graph_compute(
     for (int i = 0; i < cgraph->n_nodes; i++) {
         ggml_tensor* node = cgraph->nodes[i];
 
-        if (ggml_is_empty(node) || node->op == GGML_OP_RESHAPE ||
-            node->op == GGML_OP_TRANSPOSE || node->op == GGML_OP_VIEW ||
-            node->op == GGML_OP_PERMUTE || node->op == GGML_OP_NONE) {
+        if (ggml_is_empty(node) || node->op == GGML_OP_NONE) {
             continue;
         }
 

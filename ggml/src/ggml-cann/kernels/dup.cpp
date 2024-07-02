@@ -1,5 +1,4 @@
 #include "kernel_operator.h"
-#include "dup.h"
 
 #include <cmath>
 
@@ -11,7 +10,8 @@ template <typename SRC_T, typename DST_T>
 class DupByRows {
    public:
     __aicore__ inline DupByRows() {}
-    __aicore__ inline void init(GM_ADDR src, GM_ADDR dst, dup_param& param) {
+    __aicore__ inline void init(GM_ADDR src, GM_ADDR dst, int64_t *input_ne_ub, 
+                                size_t *input_nb_ub) {
         /* Dup by rows when src is contigous on first dimension and dst is 
         contiguous, each kernel process one row.
         */
@@ -21,24 +21,24 @@ class DupByRows {
         int64_t op_block_idx = GetBlockIdx();
 
         // param
-        num_rows = param.src_ne[1] * param.src_ne[2] * param.src_ne[3];
-        num_elem = param.src_ne[0];
+        num_rows = input_ne_ub[1] * input_ne_ub[2] * input_ne_ub[3];
+        num_elem = input_ne_ub[0];
         
         // index for (ne[1], ne[2], ne[3]): (idx_ne1, idx_ne2, idx_ne3) 
-        idx_ne3 = op_block_idx / (param.src_ne[1] * param.src_ne[2]);
-        idx_ne2 = (op_block_idx - idx_ne3 * (param.src_ne[1] * param.src_ne[2])) 
-                  / (param.src_ne[1]);
-        idx_ne1 = op_block_idx - idx_ne3 * (param.src_ne[1] * param.src_ne[2]) 
-                - idx_ne2 * param.src_ne[1];
+        idx_ne3 = op_block_idx / (input_ne_ub[1] * input_ne_ub[2]);
+        idx_ne2 = (op_block_idx - idx_ne3 * (input_ne_ub[1] * input_ne_ub[2])) 
+                  / (input_ne_ub[1]);
+        idx_ne1 = op_block_idx - idx_ne3 * (input_ne_ub[1] * input_ne_ub[2]) 
+                - idx_ne2 * input_ne_ub[1];
 
         // src may not contiguous in dim [1,2,3], so stride decited by ne&nb
-        src_stride = param.src_nb[3] * idx_ne3 + param.src_nb[2] * idx_ne2
-                     + param.src_nb[1] * idx_ne1;
+        src_stride = input_nb_ub[3] * idx_ne3 + input_nb_ub[2] * idx_ne2
+                     + input_nb_ub[1] * idx_ne1;
         
         // dst is contiguous
-        dst_stride = (idx_ne3 * (param.src_ne[1] * param.src_ne[2]) + 
-                      idx_ne2 * param.src_ne[1] + 
-                      idx_ne1) * (param.src_ne[0] * sizeof(DST_T));
+        dst_stride = (idx_ne3 * (input_ne_ub[1] * input_ne_ub[2]) + 
+                      idx_ne2 * input_ne_ub[1] + 
+                      idx_ne1) * (input_ne_ub[0] * sizeof(DST_T));
         
         src_gm.SetGlobalBuffer(reinterpret_cast<__gm__ SRC_T *>(src + 
                                                                 src_stride));
@@ -132,80 +132,94 @@ __aicore__ inline void copy_to_ub(GM_ADDR gm, T *ub, size_t size) {
     }
 }
 
-extern "C" __global__ __aicore__ void ascendc_dup_by_rows_fp16(GM_ADDR src_gm,
-                                                               GM_ADDR dst_gm,
-                                                               GM_ADDR param) {
+extern "C" __global__ __aicore__ void ascendc_dup_by_rows_fp16(
+                                                        GM_ADDR src_gm,
+                                                        GM_ADDR dst_gm,
+                                                        GM_ADDR input_ne_gm,
+                                                        GM_ADDR input_nb_gm,
+                                                        GM_ADDR output_ne_gm,
+                                                        GM_ADDR output_nb_gm) {
 
-    // copy params from gm to ub.
-    dup_param param_ub;
-    auto param_gm_ptr = (__gm__ uint8_t*)param;
-    auto param_ub_ptr = (uint8_t*)&param_ub;
+    int64_t input_ne_ub[4];
+    size_t input_nb_ub[4];
+    int64_t output_ne_ub[4];
+    size_t output_nb_ub[4];
 
-    for (int32_t i = 0; i < static_cast<int32_t>(sizeof(dup_param) / sizeof(uint8_t));
-         ++i, ++param_gm_ptr, ++param_ub_ptr) {
-        *param_ub_ptr = *param_gm_ptr;
-    }
+    copy_to_ub(input_ne_gm, input_ne_ub, 32);
+    copy_to_ub(input_nb_gm, input_nb_ub, 32);
+    copy_to_ub(output_ne_gm, output_ne_ub, 32);
+    copy_to_ub(output_nb_gm, output_nb_ub, 32);
 
     DupByRows<half, half> op;
-    op.init(src_gm, dst_gm, param_ub);
+    op.init(src_gm, dst_gm, input_ne_ub, input_nb_ub);
     op.dup(); 
 }
 
-extern "C" __global__ __aicore__ void ascendc_dup_by_rows_fp32(GM_ADDR src_gm,
-                                                               GM_ADDR dst_gm,
-                                                               GM_ADDR param) {
+extern "C" __global__ __aicore__ void ascendc_dup_by_rows_fp32(
+                                                        GM_ADDR src_gm,
+                                                        GM_ADDR dst_gm,
+                                                        GM_ADDR input_ne_gm,
+                                                        GM_ADDR input_nb_gm,
+                                                        GM_ADDR output_ne_gm,
+                                                        GM_ADDR output_nb_gm) {
+    int64_t input_ne_ub[4];
+    size_t input_nb_ub[4];
+    int64_t output_ne_ub[4];
+    size_t output_nb_ub[4];
 
-    // copy params from gm to ub.
-    dup_param param_ub;
-    auto param_gm_ptr = (__gm__ uint8_t*)param;
-    auto param_ub_ptr = (uint8_t*)&param_ub;
-
-    for (int32_t i = 0; i < static_cast<int32_t>(sizeof(dup_param) / sizeof(uint8_t));
-         ++i, ++param_gm_ptr, ++param_ub_ptr) {
-        *param_ub_ptr = *param_gm_ptr;
-    }
+    copy_to_ub(input_ne_gm, input_ne_ub, 32);
+    copy_to_ub(input_nb_gm, input_nb_ub, 32);
+    copy_to_ub(output_ne_gm, output_ne_ub, 32);
+    copy_to_ub(output_nb_gm, output_nb_ub, 32);
 
     DupByRows<float_t, float_t> op;
-    op.init(src_gm, dst_gm, param_ub);
+    op.init(src_gm, dst_gm, input_ne_ub, input_nb_ub);
     op.dup(); 
 }
 
 extern "C" __global__ __aicore__ void ascendc_dup_by_rows_fp32_to_fp16(
-                                                               GM_ADDR src_gm,
-                                                               GM_ADDR dst_gm,
-                                                               GM_ADDR param) {
+                                                        GM_ADDR src_gm,
+                                                        GM_ADDR dst_gm,
+                                                        GM_ADDR input_ne_gm,
+                                                        GM_ADDR input_nb_gm,
+                                                        GM_ADDR output_ne_gm,
+                                                        GM_ADDR output_nb_gm) {
 
-    // copy params from gm to ub.
-    dup_param param_ub;
-    auto param_gm_ptr = (__gm__ uint8_t*)param;
-    auto param_ub_ptr = (uint8_t*)&param_ub;
+    int64_t input_ne_ub[4];
+    size_t input_nb_ub[4];
+    int64_t output_ne_ub[4];
+    size_t output_nb_ub[4];
 
-    for (int32_t i = 0; i < static_cast<int32_t>(sizeof(dup_param) / sizeof(uint8_t));
-         ++i, ++param_gm_ptr, ++param_ub_ptr) {
-        *param_ub_ptr = *param_gm_ptr;
-    }
+    copy_to_ub(input_ne_gm, input_ne_ub, 32);
+    copy_to_ub(input_nb_gm, input_nb_ub, 32);
+    copy_to_ub(output_ne_gm, output_ne_ub, 32);
+    copy_to_ub(output_nb_gm, output_nb_ub, 32);
 
     DupByRows<float_t, half> op;
-    op.init(src_gm, dst_gm, param_ub);
+    op.init(src_gm, dst_gm, input_ne_ub, input_nb_ub);
     op.dup_with_cast(); 
 }
 
 extern "C" __global__ __aicore__ void ascendc_dup_by_rows_fp16_to_fp32(
-                                                               GM_ADDR src_gm,
-                                                               GM_ADDR dst_gm,
-                                                               GM_ADDR param) {
+                                                        GM_ADDR src_gm,
+                                                        GM_ADDR dst_gm,
+                                                        GM_ADDR input_ne_gm,
+                                                        GM_ADDR input_nb_gm,
+                                                        GM_ADDR output_ne_gm,
+                                                        GM_ADDR output_nb_gm) {
 
     // copy params from gm to ub.
-    dup_param param_ub;
-    auto param_gm_ptr = (__gm__ uint8_t*)param;
-    auto param_ub_ptr = (uint8_t*)&param_ub;
+    int64_t input_ne_ub[4];
+    size_t input_nb_ub[4];
+    int64_t output_ne_ub[4];
+    size_t output_nb_ub[4];
 
-    for (int32_t i = 0; i < static_cast<int32_t>(sizeof(dup_param) / sizeof(uint8_t));
-         ++i, ++param_gm_ptr, ++param_ub_ptr) {
-        *param_ub_ptr = *param_gm_ptr;
-    }
+    copy_to_ub(input_ne_gm, input_ne_ub, 32);
+    copy_to_ub(input_nb_gm, input_nb_ub, 32);
+    copy_to_ub(output_ne_gm, output_ne_ub, 32);
+    copy_to_ub(output_nb_gm, output_nb_ub, 32);
 
     DupByRows<half, float_t> op;
-    op.init(src_gm, dst_gm, param_ub);
+    op.init(src_gm, dst_gm, input_ne_ub, input_nb_ub);
     op.dup_with_cast(); 
 }

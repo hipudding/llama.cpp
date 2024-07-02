@@ -15,6 +15,5 @@
 #include "aclrtlaunch_ascendc_dup_by_rows_fp32.h"
 #include "aclrtlaunch_ascendc_dup_by_rows_fp32_to_fp16.h"
 #include "aclrtlaunch_ascendc_dup_by_rows_fp16_to_fp32.h"
-#include "dup.h"
 
 #endif  // ASCENDC_KERNELS_H
