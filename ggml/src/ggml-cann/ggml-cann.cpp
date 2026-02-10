@@ -2481,35 +2481,14 @@ static bool ggml_backend_cann_supports_op(ggml_backend_dev_t dev, const ggml_ten
         case GGML_OP_FLASH_ATTN_EXT:
             {
 #ifdef ASCEND_310P
-                // FA not support on 310p device
+                // FA not supported on 310p device
                 return false;
 #endif
-                // derived from [ggml-cuda.cu]
+                // K and V must be F16
                 if (op->src[1]->type != GGML_TYPE_F16 || op->src[2]->type != GGML_TYPE_F16) {
                     return false;
                 }
-                if (op->src[1]->type != GGML_TYPE_F16 && op->src[1]->type != GGML_TYPE_F32 &&
-                    op->src[1]->type != GGML_TYPE_BF16) {
-                    return false;
-                }
                 if (op->type != GGML_TYPE_F16 && op->type != GGML_TYPE_F32 && op->type != GGML_TYPE_BF16) {
-                    return false;
-                }
-                // TODO: support attention sinks [TAG_ATTN_SINKS]
-                if (op->src[4]) {
-                    return false;
-                }
-                if (op->src[1]->ne[0] != op->src[2]->ne[0]) {
-                    // different head sizes of K and V are not supported yet
-                    return false;
-                }
-                if (op->src[0]->ne[0] % 16 != 0) {
-                    // TODO: padding to support
-                    return false;
-                }
-                float logitSoftcap = 0.0f;
-                memcpy(&logitSoftcap, (const float *) (op->op_params) + 2, sizeof(float));
-                if (logitSoftcap != 0.0f) {
                     return false;
                 }
                 return true;
